@@ -1,0 +1,11 @@
+{
+    "name": "AHC018",
+    "dockerComposeFile": "docker-compose.yml",
+    "service": "dev",
+    "workspaceFolder": "/workspace",
+    "shutdownAction": "stopCompose",
+    "extensions": [
+        "GitHub.copilot",
+        "rust-lang.rust-analyzer"
+    ]
+}

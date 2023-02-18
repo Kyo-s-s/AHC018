@@ -59,6 +59,7 @@ struct Field {
     n: usize,
     c: usize,
     is_broken: Vec<Vec<bool>>,
+    cell_cost: Vec<Vec<i32>>,
     total_cost: usize,
 }
 
@@ -68,6 +69,7 @@ impl Field {
             n,
             c,
             is_broken: vec![vec![false; n]; n],
+            cell_cost: vec![vec![0; n]; n],
             total_cost: 0,
         }
     }
@@ -76,6 +78,7 @@ impl Field {
         if self.is_broken[y][x] {
             return Responce::Broken;
         } 
+        self.cell_cost[y][x] += power;
         self.total_cost += self.c + power as usize;
         println!("{} {} {}", y, x, power);
         input! {
@@ -115,17 +118,14 @@ impl Solver {
             sources: [(usize, usize); w],
             houses: [(usize, usize); k],
         }
-        let sources = sources.into_iter().map(|(y, x)| Pos { y, x }).collect();
-        let houses = houses.into_iter().map(|(y, x)| Pos { y, x }).collect();
-        let field = Field::new(n, c);
         Self {
             n,
             w,
             k,
             c,
-            sources,
-            houses,
-            field,
+            sources: sources.into_iter().map(|(y, x)| Pos { y, x }).collect(),
+            houses: houses.into_iter().map(|(y, x)| Pos { y, x }).collect(),
+            field: Field::new(n, c),
         }
     }
 
@@ -215,6 +215,7 @@ impl Solver {
         }
     }
 
+    // TODO: field に移植
     fn destruct<R: BufRead>(&mut self, pos: Pos, source: &mut LineSource<R>) {
         // let power = 100;
         let power = std::cmp::max(100, (self.c * 5) as i32);

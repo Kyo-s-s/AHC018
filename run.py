@@ -3,8 +3,8 @@ import pipes
 import multiprocessing
 import sys
 
-CASE = 10
-TL = 1000
+CASE = 500
+TL = 100
 
 def execute_case(seed):
     input_file_path = f'tools/in/{seed:04}.txt'

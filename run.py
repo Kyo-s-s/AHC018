@@ -3,7 +3,7 @@ import pipes
 import multiprocessing
 import sys
 
-CASE = 500
+CASE = 10
 TL = 1000
 
 def execute_case(seed):
@@ -28,7 +28,6 @@ def main():
     count = 0
     with multiprocessing.Pool(max(1, multiprocessing.cpu_count()-2)) as pool:
         for seed, output in pool.imap_unordered(execute_case, range(CASE)):
-            progress(count)
             try:
                 scores.append((int(output.split()[-1]), f'{seed:04}'))
             except ValueError:
@@ -40,6 +39,7 @@ def main():
                 print(score, flush = True)
                 exit()
             count += 1
+            progress(count)
 
     print()
     scores.sort()

@@ -91,8 +91,47 @@ impl Field {
                 self.is_broken[y][x] = true;
                 Responce::Broken
             },
-            2 => Responce::Finish,
-            _ => Responce::Invalid,
+            2 => {
+                // Responce::Finish,
+                std::process::exit(0);
+            },
+            _ => {
+                // Responce::Invalid,
+                std::process::exit(1);
+            },
+        }
+    }
+
+    fn destruct<R: BufRead>(&mut self, y: usize, x: usize, source: &mut LineSource<R>) {
+        if self.is_broken[y][x] {
+            return
+        }
+        let dxy = vec![(-1, 0), (1, 0), (0, -1), (0, 1)];
+        for &(dy, dx) in &dxy {
+            let nx = x as i32 + dx;
+            let ny = y as i32 + dy;
+            if (nx < 0 || nx >= self.n as i32) || (ny < 0 || ny >= self.n as i32) {
+                continue;
+            }
+            if !self.is_broken[ny as usize][nx as usize] {
+                continue;
+            }
+            // cell_cost[ny][nx] に近い！
+            // とりあえずその値を叩いてみる
+            let power = std::cmp::min(5000, self.cell_cost[ny as usize][nx as usize] - 400);
+            let power = std::cmp::max(power, 100);
+            let power = std::cmp::max(power, self.c as i32 * 5);
+            self.query(y, x, power, source);
+            break;
+        }
+        // max(100, c * 5)ずつやる
+        let power = std::cmp::max(100, self.c * 5) as i32;
+        loop {
+            match self.query(y, x, power, source) {
+                Responce::NotBroken => (),
+                Responce::Broken => break,
+                _ => unreachable!(),
+            }
         }
     }
 }
@@ -130,8 +169,6 @@ impl Solver {
     }
 
     fn solve<R: BufRead>(&mut self, input_source: &mut LineSource<R>) {
-        let houses = self.houses.clone();
-        let use_sources = self.sources[0].clone();
         // マンハッタン距離を見つつ最小全域木っぽいのを作るなど
         let mut nodes = vec![];
         for (i, &house) in (0_usize..).zip(&self.houses) {
@@ -196,39 +233,25 @@ impl Solver {
     fn move_to<R: BufRead>(&mut self, start: &Pos, goal: &Pos, source: &mut LineSource<R>) {
         if start.y < goal.y {
             for y in start.y..=goal.y {
-                self.destruct(Pos { y, x: start.x }, source);
+                self.field.destruct(y, start.x, source);
             }
         } else {
             for y in goal.y..=start.y {
-                self.destruct(Pos { y, x: start.x }, source);
+                self.field.destruct(y, start.x, source);
             }
         }
 
         if start.x < goal.x {
             for x in start.x..=goal.x {
-                self.destruct(Pos { y: goal.y, x }, source);
+                self.field.destruct(goal.y, x, source);
             }
         } else {
             for x in goal.x..=start.x {
-                self.destruct(Pos { y: goal.y, x }, source);
+                self.field.destruct(goal.y, x, source);
             }
         }
     }
 
-    // TODO: field に移植
-    fn destruct<R: BufRead>(&mut self, pos: Pos, source: &mut LineSource<R>) {
-        // let power = 100;
-        let power = std::cmp::max(100, (self.c * 5) as i32);
-        loop {
-            let ret = self.field.query(pos.y, pos.x, power, source);
-            match ret {
-                Responce::NotBroken => (),
-                Responce::Broken => break,
-                Responce::Finish => std::process::exit(0),
-                Responce::Invalid => panic!("invalid"),
-            }
-        }
-    }
 }
 
 fn main() {

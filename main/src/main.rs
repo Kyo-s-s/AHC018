@@ -202,7 +202,6 @@ impl Solver {
         edges.sort_by(|a, b| a.0.cmp(&b.0));
 
         let mut uf = UnionFind::new(self.houses.len() + self.sources.len());
-        let mut ok_houses = vec![false; self.houses.len()];
         let mut break_edges = vec![];
         for &(_, u_id, v_id) in &edges {
             if uf.same(u_id, v_id) {
@@ -210,21 +209,16 @@ impl Solver {
             }
             let (u, u_is_house) = fix_id(u_id);
             let (v, v_is_house) = fix_id(v_id);
-            if (u_is_house && !ok_houses[u]) || (v_is_house && !ok_houses[v]) {
+            let u_has_water = (0..self.sources.len()).any(|i| uf.same(u_id, i + self.houses.len()));
+            let v_has_water = (0..self.sources.len()).any(|i| uf.same(v_id, i + self.houses.len()));
+            if !v_has_water || !u_has_water {
                 uf.merge(u_id, v_id);
                 let u_pos = if u_is_house { &self.houses[u] } else { &self.sources[u] };
                 let v_pos = if v_is_house { &self.houses[v] } else { &self.sources[v] };
                 break_edges.push((u_pos.clone(), v_pos.clone()));
-                // update ok_houses
-                // uがsourceとつながってる？
-                if u_is_house && (0..self.sources.len()).any(|i| uf.same(u_id, i + self.houses.len())) {
-                    ok_houses[u] = true;
-                }
-                if v_is_house && (0..self.sources.len()).any(|i| uf.same(v_id, i + self.houses.len())) {
-                    ok_houses[v] = true;
-                }
             }
         }
+
         for (u, v) in break_edges {
             self.move_to(&u, &v, input_source);
         }

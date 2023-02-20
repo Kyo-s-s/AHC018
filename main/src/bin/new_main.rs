@@ -1,6 +1,6 @@
 use std::{io::{BufReader, BufRead}, collections::VecDeque};
 
-use proconio::{source::line::{LineSource, self}, input};
+use proconio::{source::line::LineSource, input};
 
 struct UnionFind {
     n: usize,
@@ -63,21 +63,51 @@ impl Field {
         }
     }
 
-    fn guess_field<R: BufRead>(&mut self, line_source: &mut LineSource<R>) {
-        let step = (20..self.n).step_by(40).collect::<Vec<_>>();
+    fn guess_field<R: BufRead>(&mut self, sources: &Vec<(usize, usize)>, houses: &Vec<(usize, usize)>, line_source: &mut LineSource<R>) {
+        let mut checks = vec![];
+        for &(y, x) in sources {
+            self.guess[y][x] = self.destruct(y, x, true, line_source);
+            checks.push((y, x));
+        } 
+        for &(y, x) in houses {
+            self.guess[y][x] = self.destruct(y, x, true, line_source);
+            checks.push((y, x));
+        }
+
+        let step = (10..self.n).step_by(20).collect::<Vec<_>>();
+
         for &y in &step {
             for &x in &step {
+                let arrowed_min_dist = 5;
+                let rejected_min_dist = 75;
+                let min_dist = checks.iter().map(|&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).min().unwrap();
+                if min_dist <= arrowed_min_dist {
+                    continue;
+                }
+                // 一番近いhouses, sourcesが規定値以上離れてるならサボる
+                let near_house_dist = houses.iter().map(|&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).min().unwrap();
+                let near_source_dist = sources.iter().map(|&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).min().unwrap();
+                if near_house_dist >= rejected_min_dist && near_source_dist >= rejected_min_dist {
+                    checks.push((y, x));
+                    self.guess[y][x] = 4500;
+                    continue;
+                }
                 self.guess[y][x] = self.destruct(y, x, true, line_source);
+                checks.push((y, x));
             }
         }
+
         for y in 0..self.n {
             for x in 0..self.n {
-                let ny = *step.iter().min_by_key(|&&ny| (ny as i32 - y as i32).abs()).unwrap();
-                let nx = *step.iter().min_by_key(|&&nx| (nx as i32 - x as i32).abs()).unwrap();
+                if checks.iter().any(|&(cy, cx)| cy == y && cx == x) {
+                    continue;
+                }
+                // 一番近いchecksの値を採用
+                let &(ny, nx) = checks.iter().min_by_key(|&&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).unwrap();
                 self.guess[y][x] = self.guess[ny][nx];
             }
         }
-        for _ in 0..20 {
+        for _ in 0..40 {
             self.guess_flatten();
         }
     }
@@ -137,43 +167,60 @@ impl Field {
         if self.is_broken[y][x] {
             return self.real[y][x];
         }
+
+        let v = match self.c {
+            // TODO: self.c の値でいじる
+            _ => vec![0, 25, 60, 120, 210, 350, 570, 960, 1600, 2800, 5000],
+        };
+        if guess {
+            // 最後サボる
+            for i in 0..v.len() - 1 {
+                if v[i + 1] >= 2500 {
+                    break;
+                }
+                self.query(y, x, v[i + 1] - v[i], line_source);
+            }
+            if self.is_broken[y][x] {
+                return self.real[y][x];
+            } 
+            return 4500
+        } 
+
+        // 隣接マスにrealが有効なものがある -> その値を叩く   
         let dxy = vec![(-1, 0), (1, 0), (0, -1), (0, 1)];
-        for &(dy, dx) in &dxy {
+        let mut i = 0;
+        for &(dy, dx) in &(dxy) {
             let ny = y as i32 + dy;
             let nx = x as i32 + dx;
-            if nx < 0 || ny < 0 || nx >= self.n as i32 || ny >= self.n as i32 {
-                continue;
-            }
-            if !self.is_broken[ny as usize][nx as usize] {
+            if nx < 0 || nx >= self.n as i32 || ny < 0 || ny >= self.n as i32 {
                 continue;
             }
             let ny = ny as usize;
             let nx = nx as usize;
-            let power = std::cmp::min(5000, self.real[ny][nx] - 400);
-            let power = std::cmp::max(power, std::cmp::max(100, self.c * 5) as i32);
-            self.query(y, x, power, line_source);
+            if !self.is_broken[ny][nx] {
+                continue;
+            } 
+            // self.real[ny][nx] を越える最大のv[i]を探す
+            while i < v.len() - 1 && v[i + 1] <= self.real[ny][nx] {
+                i += 1;
+            }
+            if i > 1 {
+                i = (i as i32 - 1) as usize;
+            }
+            self.query(y, x, v[i], line_source);
             break;
         }
-        let power = if guess {
-            500
-        } else {
-            std::cmp::max(100, self.c * 5) as i32
-        };
-        loop {
-            match self.query(y, x, power, line_source) {
-                Responce::NotBroken => (),
-                Responce::Broken => {
-                    return self.real[y][x];
-                },
-            }
+        for i in i..v.len() - 1 {
+            self.query(y, x, v[i + 1] - v[i], line_source);
         }
+        return self.real[y][x]
     }
 }
 
 struct State {
     sources: Vec<(usize, usize)>,
     houses: Vec<(usize, usize)>,
-    is_broken: Vec<Vec<bool>>,
+    destuctive: Vec<Vec<bool>>,
 }
 
 impl State {
@@ -181,7 +228,7 @@ impl State {
         Self {
             sources: sources.clone(),
             houses: houses.clone(),
-            is_broken: field.is_broken.clone(),
+            destuctive: vec![vec![false; field.n]; field.n],
         }
     }
     
@@ -225,7 +272,7 @@ impl State {
             }
         }
         for &(y, x) in &break_pos {
-            self.is_broken[y][x] = true; 
+            self.destuctive[y][x] = true; 
         }
     }
 
@@ -233,7 +280,7 @@ impl State {
         println!("# dijkstra start");
         let (sy, sx) = s;
         let (ty, tx) = t;
-        let mut dist = vec![vec![i32::MAX; field.n]; field.n];
+        let mut dist = vec![vec![std::i32::MAX; field.n]; field.n];
         let mut que = std::collections::BinaryHeap::new();
         que.push(std::cmp::Reverse((0, (sy, sx))));
         dist[sy][sx] = 0;
@@ -298,7 +345,7 @@ impl State {
     fn done<R: BufRead>(&self, field: &mut Field, line_source: &mut LineSource<R>) {
         for y in 0..field.n {
             for x in 0..field.n {
-                if !self.is_broken[y][x] {
+                if !self.destuctive[y][x] {
                     continue;
                 }
                 field.destruct(y, x, false, line_source);
@@ -335,7 +382,7 @@ impl Solver {
 
     fn solve<R: BufRead>(&mut self, line_source: &mut LineSource<R>) {
         // field init
-        self.field.guess_field(line_source);
+        self.field.guess_field(&self.sources, &self.houses, line_source);
         println!("# field init done");
 
         // init state

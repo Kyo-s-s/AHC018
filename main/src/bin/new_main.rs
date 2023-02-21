@@ -76,10 +76,11 @@ impl Field {
 
         let step = (10..self.n).step_by(20).collect::<Vec<_>>();
 
+        let arrowed_min_dist = 5;
+        let rejected_min_dist = 75;
+
         for &y in &step {
             for &x in &step {
-                let arrowed_min_dist = 5;
-                let rejected_min_dist = 75;
                 let min_dist = checks.iter().map(|&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).min().unwrap();
                 if min_dist <= arrowed_min_dist {
                     continue;
@@ -182,7 +183,7 @@ impl Field {
         if guess {
             // 最後サボる
             for i in 0..v.len() - 1 {
-                if v[i + 1] >= 2000 {
+                if v[i + 1] >= 500 {
                     break;
                 }
                 self.query(y, x, v[i + 1] - v[i], line_source);
@@ -350,13 +351,38 @@ impl State {
     }
 
     fn done<R: BufRead>(&self, field: &mut Field, line_source: &mut LineSource<R>) {
+        let mut visited = vec![vec![false; field.n]; field.n];
+        let mut destuctive = vec![];
         for y in 0..field.n {
             for x in 0..field.n {
-                if !self.destuctive[y][x] {
+                if !self.destuctive[y][x] || visited[y][x] {
                     continue;
                 }
-                field.destruct(y, x, false, line_source);
+                let mut que = std::collections::VecDeque::new();
+                que.push_back((y, x));
+                visited[y][x] = true;
+                while let Some((y, x)) = que.pop_front() {
+                    destuctive.push((y, x));
+                    for (dy, dx) in vec![(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                        let ny = y as i32 + dy;
+                        let nx = x as i32 + dx;
+                        if ny < 0 || nx < 0 || ny >= field.n as i32 || nx >= field.n as i32 {
+                            continue;
+                        }
+                        let ny = ny as usize;
+                        let nx = nx as usize;
+                        if visited[ny][nx] || !self.destuctive[ny][nx] {
+                            continue;
+                        }
+                        visited[ny][nx] = true;
+                        que.push_back((ny, nx));
+                    }
+                }
             }
+        }
+
+        for &(y, x) in &destuctive {
+            field.destruct(y, x, false, line_source);
         }
     }
 }

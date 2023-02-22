@@ -231,7 +231,7 @@ AHC018のコードです。
     ave: 144428.524
     min: (18331, '0347')
     ```
-    https://atcoder.jp/contests/ahc018/submissions/390937676 , 820,641点
+    https://atcoder.jp/contests/ahc018/submissions/39093767 , 6,820,641点
 - 焼きなましをしていきたいが、これで一旦mergeする(fieldを予測するのは達成したため)
 
 - 山登りする
@@ -243,7 +243,15 @@ AHC018のコードです。
     ave: 143589.02
     min: (18027, '0467')
     ```
-
+- パラメータ調整
+    ```
+    500/500
+    total: 69613721
+    max: (714448, '0449')
+    ave: 139227.442
+    min: (18027, '0467')
+    ```
+    提出する -> https://atcoder.jp/contests/ahc018/submissions/39118697, 6419042点
 - [ ] State.destructive `Vec<Vec<bool>>` だが、無駄が多いので`BtreeSet<(usize, usize)>`にしたほうがよい...？
 
 - [ ] pythonでW, Kごとに分けて集計するように

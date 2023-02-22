@@ -1,7 +1,12 @@
-use std::io::{BufReader, BufRead};
+use std::{io::{BufReader, BufRead}, collections::BTreeSet, string};
 
 use proconio::{source::line::LineSource, input};
 use rand::Rng;
+
+fn rand(l: usize, r: usize) -> usize {
+    // [l, r) で乱数生成
+    rand::thread_rng().gen_range(l, r)
+}
 
 struct Timer {
     start: std::time::Instant,
@@ -17,6 +22,11 @@ impl Timer {
     fn is_timeout(&self, limit: f32) -> bool {
         let elapsed = self.start.elapsed().as_secs_f32();
         elapsed < limit
+    }
+
+    fn now_time(&self, message: String) {
+        let elapsed = self.start.elapsed().as_secs_f32();
+        println!("# time: {}, message: {}", elapsed, message);
     }
 }
 
@@ -37,9 +47,7 @@ impl UnionFind {
         let mut x = self.leader(a);
         let mut y = self.leader(b);
         if -self.par[x] < -self.par[y] {
-            let tmp = x;
-            x = y;
-            y = tmp;
+            std::mem::swap(&mut x, &mut y);
         }
         self.par[x] += self.par[y];
         self.par[y] = x as i32;
@@ -366,11 +374,6 @@ impl Field {
     }
 
     fn generate_init_state(&self) -> State {
-        let mut edges = vec![];
-        let mut uf = UnionFind::new(self.sampling.len());
-
-        let mut kruskal_edges = vec![];
-
         let mut keys = vec![];
         for &h in &self.houses_idx {
             keys.push(h);
@@ -378,33 +381,7 @@ impl Field {
         for &s in &self.sources_idx {
             keys.push(s);
         }
-
-        for &s in &keys {
-            for &t in &keys {
-                let (dist, _) = self.dist_path[s][t];
-                kruskal_edges.push((dist, s, t));
-            }
-        }
-        kruskal_edges.sort_by(|a, b| a.0.cmp(&b.0));
-
-        for &(_, s, t) in &kruskal_edges {
-            if uf.same(s, t) {
-                continue;
-            }
-            let s_is_ok = self.sources_idx.iter().any(|&x| uf.same(x, s));
-            let t_is_ok = self.sources_idx.iter().any(|&x| uf.same(x, t));
-            if s_is_ok && t_is_ok {
-                continue;
-            }
-            uf.merge(s, t);
-            edges.push((s, t));
-        }
-        let res = State::new(&keys, &edges);
-        if !res.check(&self.sources_idx, &self.houses_idx, self.sampling.len()) {
-            println!("invalid state");
-        }
-        res
-
+        self.state_generate(&keys)
     }
 
     fn done<R: BufRead>(&mut self, state: &State, line_source: &mut LineSource<R>) {
@@ -425,6 +402,77 @@ impl Field {
         }
     }
 
+    fn state_score(&self, state: &mut State) -> i32 {
+        if let Some(v) = state.score {
+            return v
+        }
+        let mut res = 0;
+        for &(s, t) in &state.edges {
+            let (dist, _) = self.dist_path[s][t];
+            res += dist;
+        }
+        state.score = Some(res);
+        res
+    }
+
+    fn claim(&self, state: &State) -> State {
+        // 確率で色々する
+        let mut keys = state.keys.clone();
+        // TODO
+        let cnt = rand(1, 3);
+        for _ in 0..cnt {
+            match rand(0, 2) {
+                1 => self.state_add_key(&mut keys),
+                _ => self.state_erase_key(&mut keys),
+            }
+        }
+        self.state_generate(&keys)
+    }
+
+    fn state_add_key(&self, keys: &mut Vec<usize>) {
+        // 0..self.sampling.len() で、state.keysに入っていない値をstate.keysに追加
+        let add = rand(0, self.sampling.len());
+        if keys.iter().all(|&x| x != add) {
+            keys.push(add);
+        }
+    }
+
+    fn state_erase_key(&self, keys: &mut Vec<usize>) {
+        let del = rand(0, keys.len());
+        if self.houses_idx.iter().all(|&x| x != del) && self.sources_idx.iter().all(|&x| x != del) {
+            keys.remove(del);
+        }
+    }
+
+    fn state_generate(&self, keys: &Vec<usize>) -> State {
+        let mut edges = vec![];
+        let mut uf = UnionFind::new(self.sampling.len());
+
+        let mut kruskal_edges = vec![];
+
+        for &s in keys {
+            for &t in keys {
+                let (dist, _) = self.dist_path[s][t];
+                kruskal_edges.push((dist, s, t));
+            }
+        }
+        kruskal_edges.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for &(_, s, t) in &kruskal_edges {
+            if uf.same(s, t) {
+                continue;
+            }
+            let s_is_ok = self.sources_idx.iter().any(|&x| uf.same(x, s));
+            let t_is_ok = self.sources_idx.iter().any(|&x| uf.same(x, t));
+            if s_is_ok && t_is_ok {
+                continue;
+            }
+            uf.merge(s, t);
+            edges.push((s, t));
+        }
+        State::new(&keys, &edges)
+    }
+
 }
 
 struct State {
@@ -442,6 +490,14 @@ impl State {
         }
     }
 
+    fn clone(&self) -> Self {
+        Self {
+            keys: self.keys.clone(),
+            edges: self.edges.clone(),
+            score: None,
+        }
+    }
+
     fn check(&self, sources: &Vec<usize>, houses: &Vec<usize>, n: usize) -> bool {
         let mut uf = UnionFind::new(n);
         for &(s, t) in &self.edges {
@@ -449,174 +505,8 @@ impl State {
         }
         houses.iter().all(|&h| sources.iter().any(|&s| uf.same(h, s)))
     } 
+
 }
-
-// 書き換える！！！ サンプリング点 + 水源/家をusizeで管理して、... 
-// struct State {
-//     sources: Vec<(usize, usize)>,
-//     houses: Vec<(usize, usize)>,
-//     destructive: Vec<Vec<bool>>,
-//     score: Option<i32>,
-// }
-
-// impl State {
-//     fn new(sources: &Vec<(usize, usize)>, houses: &Vec<(usize, usize)>, field: &Field) -> Self {
-//         Self {
-//             sources: sources.clone(),
-//             houses: houses.clone(),
-//             destructive: vec![vec![false; field.n]; field.n],
-//             score: None,
-//         }
-//     }
-
-//     fn clone(&self) -> Self {
-//         Self {
-//             sources: self.sources.clone(),
-//             houses: self.houses.clone(),
-//             destructive: self.destructive.clone(),
-//             score: None,
-//         }
-//     }
-    
-//     fn init_state(&mut self, field: &Field) {
-//         let mut nodes = vec![];
-//         for (i, &house) in (0_usize..).zip(&self.houses) {
-//             nodes.push((house, i));
-//         }
-//         for (i, &source) in (0_usize..).zip(&self.sources) {
-//             nodes.push((source, i + self.houses.len()));
-//         }
-
-//         let mut edges = vec![];
-//         for &(u, u_id) in &nodes {
-//             for &(v, v_id) in &nodes {
-//                 if u_id == v_id {
-//                     continue;
-//                 }
-//                 // let (dist, path) = field.dijkstra(u, v);
-//                 // edges.push((dist, u_id, v_id, path));
-//                 let (dist, path) = &field.dijkstra_vec(u, &vec![v])[0];
-//                 edges.push((dist.clone(), u_id, v_id, path.clone()));
-//             }
-//         }
-//         edges.sort_by(|a, b| a.0.cmp(&b.0));
-//         // println!("# init_state edges created: {}", edges.len());
-
-//         let mut uf = UnionFind::new(self.houses.len() + self.sources.len());
-//         let mut break_pos = vec![];
-//         for (_, u_id, v_id, path) in &edges {
-//             let u_id = *u_id;
-//             let v_id = *v_id;
-//             if uf.same(u_id, v_id) {
-//                 continue;
-//             }
-//             let u_has_water = (0..self.sources.len()).any(|i| uf.same(u_id, i + self.houses.len()));    
-//             let v_has_water = (0..self.sources.len()).any(|i| uf.same(v_id, i + self.houses.len()));    
-//             if !u_has_water || !v_has_water {
-//                 uf.merge(u_id, v_id);
-//                 for &(y, x) in path {
-//                     break_pos.push((y, x));
-//                 }
-//             }
-//         }
-//         for &(y, x) in &break_pos {
-//             self.destructive[y][x] = true; 
-//         }
-//     }
-
-//     fn claim(&mut self, field: &Field) {
-//         self.destruct(); // 破壊のしかたが悪い(壊しすぎ)なのがある(が、今のところどうしようもない...？)
-//         // TODO: 構築しなおし
-//     }
-
-//     fn destruct(&mut self) {
-//         let n = self.destructive.len();
-//         // ある一点とその隣接する家/水源以外を破壊 ここで定数倍(最悪15)掛かるの嫌だなぁ... 一旦定数倍かけて、実装終わったらFieldに情報を二次元配列で持たせておく？
-//         let is_house_or_source = |y: usize, x: usize| {
-//             self.houses.iter().any(|&house| house == (y, x)) || self.sources.iter().any(|&source| source == (y, x))
-//         };
-//         // 壊す点を選ぶ
-//         let mut destruct_poss = vec![];
-//         for y in 0..n { for x in 0..n {
-//             if self.destructive[y][x] && !is_house_or_source(y, x) {
-//                 destruct_poss.push((y, x));
-//             }
-//         }}
-//         let rnd = rand::thread_rng().gen_range(0, destruct_poss.len());
-//         let destruct_pos = destruct_poss[rnd];
-
-//         // 壊す点から隣接する家/水源以外を壊す(self.destructive を false に更新)
-//         let mut que = std::collections::VecDeque::new();
-//         self.destructive[destruct_pos.0][destruct_pos.1] = false;
-//         que.push_back(destruct_pos);
-//         while let Some((y, x)) = que.pop_front() {
-//             if is_house_or_source(y, x) {
-//                 continue;
-//             }
-//             for &(dy, dx) in &[(-1, 0), (1, 0), (0, -1), (0, 1)] {
-//                 if let Some((ny, nx)) = convert_index(y, dy, x, dx, n) {
-//                     if is_house_or_source(ny, nx) || !self.destructive[ny][nx] {
-//                         continue;
-//                     }
-//                     self.destructive[ny][nx] = false;
-//                     que.push_back((ny, nx));
-//                 }
-//             }
-//         }
-//     }
-
-//     fn construct(&mut self, field: &Field) {
-
-//     }
-
-//     fn done<R: BufRead>(&self, field: &mut Field, line_source: &mut LineSource<R>) {
-//         let mut visited = vec![vec![false; field.n]; field.n];
-//         let mut destuctive = vec![];
-//         for y in 0..field.n {
-//             for x in 0..field.n {
-//                 if !self.destructive[y][x] || visited[y][x] {
-//                     continue;
-//                 }
-//                 let mut que = std::collections::VecDeque::new();
-//                 que.push_back((y, x));
-//                 visited[y][x] = true;
-//                 while let Some((y, x)) = que.pop_front() {
-//                     destuctive.push((y, x));
-//                     for (dy, dx) in vec![(-1, 0), (1, 0), (0, -1), (0, 1)] {
-//                         if let Some((ny, nx)) = convert_index(y, dy, x, dx, field.n) {
-//                             if visited[ny][nx] || !self.destructive[ny][nx] {
-//                                 continue;
-//                             }
-//                             visited[ny][nx] = true;
-//                             que.push_back((ny, nx));
-//                         }
-//                     }
-//                 }
-//             }
-//         }
-
-//         for &(y, x) in &destuctive {
-//             field.destruct(y, x, false, line_source);
-//         }
-//     }
-
-//     fn score(&mut self, field: &Field) -> i32 {
-//         if let Some(v) = self.score {
-//             return v;
-//         }
-//         // TODO: 条件を満たしているか？
-//         let mut res = 0;
-//         for y in 0..field.n {
-//             for x in 0..field.n {
-//                 if self.destructive[y][x] {
-//                     res += field.guess[y][x];
-//                 }
-//             }
-//         }
-//         self.score = Some(res);
-//         res
-//     } 
-// }
 
 struct Solver {
     n: usize,
@@ -647,26 +537,34 @@ impl Solver {
     fn solve<R: BufRead>(&mut self, line_source: &mut LineSource<R>, timer: &Timer) {
         // field init
         self.field.guess_field(&self.sources, &self.houses, line_source);
-        // println!("# field init done");
+        timer.now_time(("finish guess_field").to_string());
+        // ここまでで3.5secつかってるけど、testerの方で吸われていそう
 
         // init state
-        // let mut current_state = State::new(&self.sources, &self.houses, &self.field);
-        // current_state.init_state(&self.field);
         let mut current_state = self.field.generate_init_state();
-        // println!("# state init done");
+        timer.now_time(("finish generate init_state").to_string());
 
+        let mut current_states = vec![];
+        for _ in 0..10 {
+            current_states.push(current_state.clone());
+        }
+
+
+        let mut cnt = 0;
         // // claiming
-        // while timer.is_timeout(4.5) {
-        //     let mut next_state = current_state.clone();
-        //     next_state.claim(&self.field);
-        //     if next_state.score(&self.field) < current_state.score(&self.field) {
-        //         current_state = next_state;
-        //     }
-        // }
+        while timer.is_timeout(4.5) {
+            cnt += 1;
+            let mut nxt_state = self.field.claim(&current_state);
+            if self.field.state_score(&mut nxt_state) < self.field.state_score(&mut current_state) {
+                current_state = nxt_state;
+            }
+        }
+        
+        timer.now_time(format!("count: {}", cnt));
 
         // output
-        // current_state.done(&mut self.field, line_source);
         self.field.done(&current_state, line_source);
+
     }
 }
 

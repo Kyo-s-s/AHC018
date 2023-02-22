@@ -1,6 +1,24 @@
-use std::{io::{BufReader, BufRead}, collections::VecDeque};
+use std::io::{BufReader, BufRead};
 
 use proconio::{source::line::LineSource, input};
+use rand::Rng;
+
+struct Timer {
+    start: std::time::Instant,
+}
+
+impl Timer {
+    fn new() -> Self {
+        Self {
+            start: std::time::Instant::now(),
+        }
+    }
+
+    fn is_timeout(&self, limit: f32) -> bool {
+        let elapsed = self.start.elapsed().as_secs_f32();
+        elapsed < limit
+    }
+}
 
 struct UnionFind {
     n: usize,
@@ -45,6 +63,16 @@ impl UnionFind {
 enum Responce {
     NotBroken,
     Broken,
+}
+
+fn convert_index(y: usize, dy: i32, x: usize, dx: i32, n: usize) -> Option<(usize, usize)> {
+    let ny = y as i32 + dy;
+    let nx = x as i32 + dx;
+    if ny < 0 || ny >= n as i32 || nx < 0 || nx >= n as i32 {
+        None
+    } else {
+        Some((ny as usize, nx as usize))
+    }
 }
 
 struct Field {
@@ -121,15 +149,10 @@ impl Field {
                 let mut sum = 0;
                 let mut cnt = 0;
                 for &(dy, dx) in &dxy {
-                    let ny = x as i32 + dy;
-                    let nx = y as i32 + dx;
-                    if nx < 0 || nx >= self.n as i32 || ny < 0 || ny >= self.n as i32 {
-                        continue;
+                    if let Some((ny, nx)) = convert_index(y, dy, x, dx, self.n) {
+                        sum += self.guess[ny][nx];
+                        cnt += 1;
                     }
-                    let ny = ny as usize;
-                    let nx = nx as usize;
-                    sum += self.guess[ny][nx];
-                    cnt += 1;
                 }
                 guess[y][x] = sum / cnt as i32;
             }
@@ -198,25 +221,20 @@ impl Field {
         let dxy = vec![(-1, 0), (1, 0), (0, -1), (0, 1)];
         let mut i = 0;
         for &(dy, dx) in &(dxy) {
-            let ny = y as i32 + dy;
-            let nx = x as i32 + dx;
-            if nx < 0 || nx >= self.n as i32 || ny < 0 || ny >= self.n as i32 {
-                continue;
-            }
-            let ny = ny as usize;
-            let nx = nx as usize;
-            if !self.is_broken[ny][nx] {
-                continue;
+            if let Some((ny, nx)) = convert_index(y, dy, x, dx, self.n) {
+                if !self.is_broken[ny][nx] {
+                    continue;
+                }
+                // self.real[ny][nx] を越える最大のv[i]を探す
+                while i < v.len() - 1 && v[i + 1] <= self.real[ny][nx] {
+                    i += 1;
+                }
+                if i > 1 {
+                    i = (i as i32 - 1) as usize;
+                }
+                self.query(y, x, v[i], line_source);
+                break;
             } 
-            // self.real[ny][nx] を越える最大のv[i]を探す
-            while i < v.len() - 1 && v[i + 1] <= self.real[ny][nx] {
-                i += 1;
-            }
-            if i > 1 {
-                i = (i as i32 - 1) as usize;
-            }
-            self.query(y, x, v[i], line_source);
-            break;
         }
         for i in i..v.len() - 1 {
             self.query(y, x, v[i + 1] - v[i], line_source);
@@ -228,7 +246,8 @@ impl Field {
 struct State {
     sources: Vec<(usize, usize)>,
     houses: Vec<(usize, usize)>,
-    destuctive: Vec<Vec<bool>>,
+    destructive: Vec<Vec<bool>>,
+    score: Option<i32>,
 }
 
 impl State {
@@ -236,7 +255,17 @@ impl State {
         Self {
             sources: sources.clone(),
             houses: houses.clone(),
-            destuctive: vec![vec![false; field.n]; field.n],
+            destructive: vec![vec![false; field.n]; field.n],
+            score: None,
+        }
+    }
+
+    fn clone(&self) -> Self {
+        Self {
+            sources: self.sources.clone(),
+            houses: self.houses.clone(),
+            destructive: self.destructive.clone(),
+            score: None,
         }
     }
     
@@ -255,12 +284,12 @@ impl State {
                 if u_id == v_id {
                     continue;
                 }
-                let (dist, path) = self.dijkstra(field, u, v);
+                let (dist, path) = self.init_dijkstra(field, u, v);
                 edges.push((dist, u_id, v_id, path));
             }
         }
         edges.sort_by(|a, b| a.0.cmp(&b.0));
-        println!("# init_state edges created: {}", edges.len());
+        // println!("# init_state edges created: {}", edges.len());
 
         let mut uf = UnionFind::new(self.houses.len() + self.sources.len());
         let mut break_pos = vec![];
@@ -280,12 +309,56 @@ impl State {
             }
         }
         for &(y, x) in &break_pos {
-            self.destuctive[y][x] = true; 
+            self.destructive[y][x] = true; 
         }
     }
 
-    fn dijkstra(&self, field: &Field, s: (usize, usize), t: (usize, usize)) -> (i32, Vec<(usize, usize)>) {
-        println!("# dijkstra start");
+    fn claim(&mut self, field: &Field) {
+        self.destruct(); // 破壊のしかたが悪い(壊しすぎ)なのがある(が、今のところどうしようもない...？)
+        // TODO: 構築しなおし
+    }
+
+    fn destruct(&mut self) {
+        let n = self.destructive.len();
+        // ある一点とその隣接する家/水源以外を破壊 ここで定数倍(最悪15)掛かるの嫌だなぁ... 一旦定数倍かけて、実装終わったらFieldに情報を二次元配列で持たせておく？
+        let is_house_or_source = |y: usize, x: usize| {
+            self.houses.iter().any(|&house| house == (y, x)) || self.sources.iter().any(|&source| source == (y, x))
+        };
+        // 壊す点を選ぶ
+        let mut destruct_poss = vec![];
+        for y in 0..n { for x in 0..n {
+            if self.destructive[y][x] && !is_house_or_source(y, x) {
+                destruct_poss.push((y, x));
+            }
+        }}
+        let rnd = rand::thread_rng().gen_range(0, destruct_poss.len());
+        let destruct_pos = destruct_poss[rnd];
+
+        // 壊す点から隣接する家/水源以外を壊す(self.destructive を false に更新)
+        let mut que = std::collections::VecDeque::new();
+        self.destructive[destruct_pos.0][destruct_pos.1] = false;
+        que.push_back(destruct_pos);
+        while let Some((y, x)) = que.pop_front() {
+            if is_house_or_source(y, x) {
+                continue;
+            }
+            for &(dy, dx) in &[(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                if let Some((ny, nx)) = convert_index(y, dy, x, dx, n) {
+                    if is_house_or_source(ny, nx) || !self.destructive[ny][nx] {
+                        continue;
+                    }
+                    self.destructive[ny][nx] = false;
+                    que.push_back((ny, nx));
+                }
+            }
+        }
+    }
+
+    fn construct(&mut self, field: &Field) {
+
+    }
+
+    fn init_dijkstra(&self, field: &Field, s: (usize, usize), t: (usize, usize)) -> (i32, Vec<(usize, usize)>) {
         let (sy, sx) = s;
         let (ty, tx) = t;
         let mut dist = vec![vec![std::i32::MAX; field.n]; field.n];
@@ -304,22 +377,16 @@ impl State {
                 continue;
             }
             for &(dy, dx) in &dyx {
-                let ny = y as i32 + dy;
-                let nx = x as i32 + dx;
-                if ny < 0 || nx < 0 || ny >= field.n as i32 || nx >= field.n as i32 {
-                    continue;
+                if let Some((ny, nx)) = convert_index(y, dy, x, dx, field.n) {
+                    let c = cost(ny, nx);
+                    if dist[ny][nx] <= d + c {
+                        continue;
+                    }
+                    dist[ny][nx] = d + c;
+                    que.push(std::cmp::Reverse((d + c, (ny, nx))));
                 }
-                let ny = ny as usize;
-                let nx = nx as usize;
-                let c = cost(ny, nx);
-                if dist[ny][nx] <= d + c {
-                    continue;
-                }
-                dist[ny][nx] = d + c;
-                que.push(std::cmp::Reverse((d + c, (ny, nx))));
             }
         }
-        println!("# dijkstra path start");
         // 復元
         let mut res = vec![(ty, tx)];
         loop {
@@ -332,21 +399,14 @@ impl State {
             } 
             // println!("# dist: {}, pos: {}, {}, cost: {}", dist[y][x], y, x, cost(y, x));
             for &(dy, dx) in &dyx {
-                let py = y as i32 + dy;
-                let px = x as i32 + dx;
-                if py < 0 || px < 0 || py >= field.n as i32 || px >= field.n as i32 {
-                    continue;
-                }
-                let py = py as usize;
-                let px = px as usize;
-                // println!("# >> dist: {}, pos: {}, {}", dist[py][px], py, px);
-                if dist[y][x] == dist[py][px] + cost(y, x) {
-                    res.push((py, px));
-                    break;
+                if let Some((py, px)) = convert_index(y, dy, x, dx, field.n) {
+                    if dist[y][x] == dist[py][px] + cost(y, x) {
+                        res.push((py, px));
+                        break;
+                    }
                 }
             }
         }
-        println!("# dijkstra finish");
         return (dist[ty][tx], res);
     }
 
@@ -355,7 +415,7 @@ impl State {
         let mut destuctive = vec![];
         for y in 0..field.n {
             for x in 0..field.n {
-                if !self.destuctive[y][x] || visited[y][x] {
+                if !self.destructive[y][x] || visited[y][x] {
                     continue;
                 }
                 let mut que = std::collections::VecDeque::new();
@@ -364,18 +424,13 @@ impl State {
                 while let Some((y, x)) = que.pop_front() {
                     destuctive.push((y, x));
                     for (dy, dx) in vec![(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                        let ny = y as i32 + dy;
-                        let nx = x as i32 + dx;
-                        if ny < 0 || nx < 0 || ny >= field.n as i32 || nx >= field.n as i32 {
-                            continue;
+                        if let Some((ny, nx)) = convert_index(y, dy, x, dx, field.n) {
+                            if visited[ny][nx] || !self.destructive[ny][nx] {
+                                continue;
+                            }
+                            visited[ny][nx] = true;
+                            que.push_back((ny, nx));
                         }
-                        let ny = ny as usize;
-                        let nx = nx as usize;
-                        if visited[ny][nx] || !self.destuctive[ny][nx] {
-                            continue;
-                        }
-                        visited[ny][nx] = true;
-                        que.push_back((ny, nx));
                     }
                 }
             }
@@ -385,6 +440,23 @@ impl State {
             field.destruct(y, x, false, line_source);
         }
     }
+
+    fn score(&mut self, field: &Field) -> i32 {
+        if let Some(v) = self.score {
+            return v;
+        }
+        // TODO: 条件を満たしているか？
+        let mut res = 0;
+        for y in 0..field.n {
+            for x in 0..field.n {
+                if self.destructive[y][x] {
+                    res += field.guess[y][x];
+                }
+            }
+        }
+        self.score = Some(res);
+        res
+    } 
 }
 
 struct Solver {
@@ -413,23 +485,35 @@ impl Solver {
         }
     }
 
-    fn solve<R: BufRead>(&mut self, line_source: &mut LineSource<R>) {
+    fn solve<R: BufRead>(&mut self, line_source: &mut LineSource<R>, timer: &Timer) {
         // field init
         self.field.guess_field(&self.sources, &self.houses, line_source);
-        println!("# field init done");
+        // println!("# field init done");
 
         // init state
-        let mut state = State::new(&self.sources, &self.houses, &self.field);
-        state.init_state(&self.field);
-        println!("# state init done");
-        state.done(&mut self.field, line_source);
+        let mut current_state = State::new(&self.sources, &self.houses, &self.field);
+        current_state.init_state(&self.field);
+        // println!("# state init done");
+
+        // // claiming
+        // while timer.is_timeout(4.5) {
+        //     let mut next_state = current_state.clone();
+        //     next_state.claim(&self.field);
+        //     if next_state.score(&self.field) < current_state.score(&self.field) {
+        //         current_state = next_state;
+        //     }
+        // }
+
+        // output
+        current_state.done(&mut self.field, line_source);
     }
 }
 
 
 fn main() {
+    let timer = Timer::new();
     let stdin = std::io::stdin();
     let mut line_source = LineSource::new(BufReader::new(stdin.lock()));
     let mut solver = Solver::new(&mut line_source);
-    solver.solve(&mut line_source);
+    solver.solve(&mut line_source, &timer);
 }

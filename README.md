@@ -234,6 +234,9 @@ AHC018のコードです。
     https://atcoder.jp/contests/ahc018/submissions/390937676 , 820,641点
 - 焼きなましをしていきたいが、これで一旦mergeする(fieldを予測するのは達成したため)
 
+
+- [ ] State.destructive `Vec<Vec<bool>>` だが、無駄が多いので`BtreeSet<(usize, usize)>`にしたほうがよい...？
+
 - [ ] pythonでW, Kごとに分けて集計するように
 
 - グリッドで情報を持って、N*NのUnionFindをもってやる を実装する！

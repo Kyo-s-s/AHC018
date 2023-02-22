@@ -84,12 +84,15 @@ struct Field {
     total_cost: usize,
     sampling: Vec<(usize, usize)>, // 水源、家 + 一定間隔で取得したpos
     dist_path: Vec<Vec<(i32, Vec<(usize, usize)>)>>,
+    houses_idx: Vec<usize>,
+    sources_idx: Vec<usize>,
 }
 
 impl Field {
     fn new(n: usize, c: usize) -> Self {
         Self {
             n, c, guess: vec![vec![0; n]; n], is_broken: vec![vec![false; n]; n], real: vec![vec![0; n]; n], total_cost: 0, sampling: vec![], dist_path: vec![],
+            houses_idx: vec![], sources_idx: vec![],
         }
     }
 
@@ -99,11 +102,13 @@ impl Field {
         for &(y, x) in sources {
             self.guess[y][x] = self.destruct(y, x, true, line_source);
             checks.push((y, x));
+            self.sources_idx.push(self.sampling.len());
             self.sampling.push((y, x));
         } 
         for &(y, x) in houses {
             self.guess[y][x] = self.destruct(y, x, true, line_source);
             checks.push((y, x));
+            self.houses_idx.push(self.sampling.len());
             self.sampling.push((y, x));
         }
 
@@ -226,6 +231,7 @@ impl Field {
         return (dist[ty][tx], res);
     }
 
+    // TODO: (Vec<i32>, Vec<Vec<(usize, usize)>>) を返すように
     fn dijkstra_vec(&self, s: (usize, usize), v: &Vec<(usize, usize)>) -> Vec<(i32, Vec<(usize, usize)>)> {
         let (sy, sx) = s;
         let mut dist = vec![vec![std::i32::MAX; self.n]; self.n];
@@ -233,7 +239,8 @@ impl Field {
         que.push(std::cmp::Reverse((0, (sy, sx))));
         dist[sy][sx] = 0;
         let cost = |y: usize, x: usize| {
-            self.guess[y][x]
+            // self.guess[y][x]
+            std::cmp::max(1, self.guess[y][x] - self.real[y][x])
         };
         while let Some(std::cmp::Reverse((d, (y, x)))) = que.pop() {
             if d > dist[y][x] {
@@ -357,173 +364,259 @@ impl Field {
         }
         return self.real[y][x]
     }
+
+    fn generate_init_state(&self) -> State {
+        let mut edges = vec![];
+        let mut uf = UnionFind::new(self.sampling.len());
+
+        let mut kruskal_edges = vec![];
+
+        let mut keys = vec![];
+        for &h in &self.houses_idx {
+            keys.push(h);
+        }
+        for &s in &self.sources_idx {
+            keys.push(s);
+        }
+
+        for &s in &keys {
+            for &t in &keys {
+                let (dist, _) = self.dist_path[s][t];
+                kruskal_edges.push((dist, s, t));
+            }
+        }
+        kruskal_edges.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for &(_, s, t) in &kruskal_edges {
+            if uf.same(s, t) {
+                continue;
+            }
+            let s_is_ok = self.sources_idx.iter().any(|&x| uf.same(x, s));
+            let t_is_ok = self.sources_idx.iter().any(|&x| uf.same(x, t));
+            if s_is_ok && t_is_ok {
+                continue;
+            }
+            uf.merge(s, t);
+            edges.push((s, t));
+        }
+        let res = State::new(&keys, &edges);
+        if !res.check(&self.sources_idx, &self.houses_idx, self.sampling.len()) {
+            println!("invalid state");
+        }
+        res
+
+    }
+
+    fn done<R: BufRead>(&mut self, state: &State, line_source: &mut LineSource<R>) {
+        println!("# done start");
+        if !state.check(&self.sources_idx, &self.houses_idx, self.sampling.len()) {
+            println!("# invalid state");
+            panic!("invalid state");
+        }
+        let mut break_pos = vec![];
+        for &(s, t) in &state.edges {
+            let (_, path) = &self.dist_path[s][t];
+            for &(y, x) in path {
+                break_pos.push((y, x));
+            }
+        }
+        for &(y, x) in &break_pos {
+            self.destruct(y, x, false, line_source);
+        }
+    }
+
 }
 
 struct State {
-    sources: Vec<(usize, usize)>,
-    houses: Vec<(usize, usize)>,
-    destructive: Vec<Vec<bool>>,
+    keys: Vec<usize>,
+    edges: Vec<(usize, usize)>,
     score: Option<i32>,
 }
 
 impl State {
-    fn new(sources: &Vec<(usize, usize)>, houses: &Vec<(usize, usize)>, field: &Field) -> Self {
+    fn new(keys: &Vec<usize>, edges: &Vec<(usize, usize)>) -> Self {
         Self {
-            sources: sources.clone(),
-            houses: houses.clone(),
-            destructive: vec![vec![false; field.n]; field.n],
+            keys: keys.clone(),
+            edges: edges.clone(),
             score: None,
         }
     }
 
-    fn clone(&self) -> Self {
-        Self {
-            sources: self.sources.clone(),
-            houses: self.houses.clone(),
-            destructive: self.destructive.clone(),
-            score: None,
+    fn check(&self, sources: &Vec<usize>, houses: &Vec<usize>, n: usize) -> bool {
+        let mut uf = UnionFind::new(n);
+        for &(s, t) in &self.edges {
+            uf.merge(s, t);
         }
-    }
-    
-    fn init_state(&mut self, field: &Field) {
-        let mut nodes = vec![];
-        for (i, &house) in (0_usize..).zip(&self.houses) {
-            nodes.push((house, i));
-        }
-        for (i, &source) in (0_usize..).zip(&self.sources) {
-            nodes.push((source, i + self.houses.len()));
-        }
-
-        let mut edges = vec![];
-        for &(u, u_id) in &nodes {
-            for &(v, v_id) in &nodes {
-                if u_id == v_id {
-                    continue;
-                }
-                let (dist, path) = field.dijkstra(u, v);
-                edges.push((dist, u_id, v_id, path));
-                // let (dist, path) = &field.dijkstra_vec(u, &vec![v])[0];
-                // edges.push((dist.clone(), u_id, v_id, path.clone()));
-            }
-        }
-        edges.sort_by(|a, b| a.0.cmp(&b.0));
-        // println!("# init_state edges created: {}", edges.len());
-
-        let mut uf = UnionFind::new(self.houses.len() + self.sources.len());
-        let mut break_pos = vec![];
-        for (_, u_id, v_id, path) in &edges {
-            let u_id = *u_id;
-            let v_id = *v_id;
-            if uf.same(u_id, v_id) {
-                continue;
-            }
-            let u_has_water = (0..self.sources.len()).any(|i| uf.same(u_id, i + self.houses.len()));    
-            let v_has_water = (0..self.sources.len()).any(|i| uf.same(v_id, i + self.houses.len()));    
-            if !u_has_water || !v_has_water {
-                uf.merge(u_id, v_id);
-                for &(y, x) in path {
-                    break_pos.push((y, x));
-                }
-            }
-        }
-        for &(y, x) in &break_pos {
-            self.destructive[y][x] = true; 
-        }
-    }
-
-    fn claim(&mut self, field: &Field) {
-        self.destruct(); // 破壊のしかたが悪い(壊しすぎ)なのがある(が、今のところどうしようもない...？)
-        // TODO: 構築しなおし
-    }
-
-    fn destruct(&mut self) {
-        let n = self.destructive.len();
-        // ある一点とその隣接する家/水源以外を破壊 ここで定数倍(最悪15)掛かるの嫌だなぁ... 一旦定数倍かけて、実装終わったらFieldに情報を二次元配列で持たせておく？
-        let is_house_or_source = |y: usize, x: usize| {
-            self.houses.iter().any(|&house| house == (y, x)) || self.sources.iter().any(|&source| source == (y, x))
-        };
-        // 壊す点を選ぶ
-        let mut destruct_poss = vec![];
-        for y in 0..n { for x in 0..n {
-            if self.destructive[y][x] && !is_house_or_source(y, x) {
-                destruct_poss.push((y, x));
-            }
-        }}
-        let rnd = rand::thread_rng().gen_range(0, destruct_poss.len());
-        let destruct_pos = destruct_poss[rnd];
-
-        // 壊す点から隣接する家/水源以外を壊す(self.destructive を false に更新)
-        let mut que = std::collections::VecDeque::new();
-        self.destructive[destruct_pos.0][destruct_pos.1] = false;
-        que.push_back(destruct_pos);
-        while let Some((y, x)) = que.pop_front() {
-            if is_house_or_source(y, x) {
-                continue;
-            }
-            for &(dy, dx) in &[(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                if let Some((ny, nx)) = convert_index(y, dy, x, dx, n) {
-                    if is_house_or_source(ny, nx) || !self.destructive[ny][nx] {
-                        continue;
-                    }
-                    self.destructive[ny][nx] = false;
-                    que.push_back((ny, nx));
-                }
-            }
-        }
-    }
-
-    fn construct(&mut self, field: &Field) {
-
-    }
-
-    fn done<R: BufRead>(&self, field: &mut Field, line_source: &mut LineSource<R>) {
-        let mut visited = vec![vec![false; field.n]; field.n];
-        let mut destuctive = vec![];
-        for y in 0..field.n {
-            for x in 0..field.n {
-                if !self.destructive[y][x] || visited[y][x] {
-                    continue;
-                }
-                let mut que = std::collections::VecDeque::new();
-                que.push_back((y, x));
-                visited[y][x] = true;
-                while let Some((y, x)) = que.pop_front() {
-                    destuctive.push((y, x));
-                    for (dy, dx) in vec![(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                        if let Some((ny, nx)) = convert_index(y, dy, x, dx, field.n) {
-                            if visited[ny][nx] || !self.destructive[ny][nx] {
-                                continue;
-                            }
-                            visited[ny][nx] = true;
-                            que.push_back((ny, nx));
-                        }
-                    }
-                }
-            }
-        }
-
-        for &(y, x) in &destuctive {
-            field.destruct(y, x, false, line_source);
-        }
-    }
-
-    fn score(&mut self, field: &Field) -> i32 {
-        if let Some(v) = self.score {
-            return v;
-        }
-        // TODO: 条件を満たしているか？
-        let mut res = 0;
-        for y in 0..field.n {
-            for x in 0..field.n {
-                if self.destructive[y][x] {
-                    res += field.guess[y][x];
-                }
-            }
-        }
-        self.score = Some(res);
-        res
+        houses.iter().all(|&h| sources.iter().any(|&s| uf.same(h, s)))
     } 
 }
+
+// 書き換える！！！ サンプリング点 + 水源/家をusizeで管理して、... 
+// struct State {
+//     sources: Vec<(usize, usize)>,
+//     houses: Vec<(usize, usize)>,
+//     destructive: Vec<Vec<bool>>,
+//     score: Option<i32>,
+// }
+
+// impl State {
+//     fn new(sources: &Vec<(usize, usize)>, houses: &Vec<(usize, usize)>, field: &Field) -> Self {
+//         Self {
+//             sources: sources.clone(),
+//             houses: houses.clone(),
+//             destructive: vec![vec![false; field.n]; field.n],
+//             score: None,
+//         }
+//     }
+
+//     fn clone(&self) -> Self {
+//         Self {
+//             sources: self.sources.clone(),
+//             houses: self.houses.clone(),
+//             destructive: self.destructive.clone(),
+//             score: None,
+//         }
+//     }
+    
+//     fn init_state(&mut self, field: &Field) {
+//         let mut nodes = vec![];
+//         for (i, &house) in (0_usize..).zip(&self.houses) {
+//             nodes.push((house, i));
+//         }
+//         for (i, &source) in (0_usize..).zip(&self.sources) {
+//             nodes.push((source, i + self.houses.len()));
+//         }
+
+//         let mut edges = vec![];
+//         for &(u, u_id) in &nodes {
+//             for &(v, v_id) in &nodes {
+//                 if u_id == v_id {
+//                     continue;
+//                 }
+//                 // let (dist, path) = field.dijkstra(u, v);
+//                 // edges.push((dist, u_id, v_id, path));
+//                 let (dist, path) = &field.dijkstra_vec(u, &vec![v])[0];
+//                 edges.push((dist.clone(), u_id, v_id, path.clone()));
+//             }
+//         }
+//         edges.sort_by(|a, b| a.0.cmp(&b.0));
+//         // println!("# init_state edges created: {}", edges.len());
+
+//         let mut uf = UnionFind::new(self.houses.len() + self.sources.len());
+//         let mut break_pos = vec![];
+//         for (_, u_id, v_id, path) in &edges {
+//             let u_id = *u_id;
+//             let v_id = *v_id;
+//             if uf.same(u_id, v_id) {
+//                 continue;
+//             }
+//             let u_has_water = (0..self.sources.len()).any(|i| uf.same(u_id, i + self.houses.len()));    
+//             let v_has_water = (0..self.sources.len()).any(|i| uf.same(v_id, i + self.houses.len()));    
+//             if !u_has_water || !v_has_water {
+//                 uf.merge(u_id, v_id);
+//                 for &(y, x) in path {
+//                     break_pos.push((y, x));
+//                 }
+//             }
+//         }
+//         for &(y, x) in &break_pos {
+//             self.destructive[y][x] = true; 
+//         }
+//     }
+
+//     fn claim(&mut self, field: &Field) {
+//         self.destruct(); // 破壊のしかたが悪い(壊しすぎ)なのがある(が、今のところどうしようもない...？)
+//         // TODO: 構築しなおし
+//     }
+
+//     fn destruct(&mut self) {
+//         let n = self.destructive.len();
+//         // ある一点とその隣接する家/水源以外を破壊 ここで定数倍(最悪15)掛かるの嫌だなぁ... 一旦定数倍かけて、実装終わったらFieldに情報を二次元配列で持たせておく？
+//         let is_house_or_source = |y: usize, x: usize| {
+//             self.houses.iter().any(|&house| house == (y, x)) || self.sources.iter().any(|&source| source == (y, x))
+//         };
+//         // 壊す点を選ぶ
+//         let mut destruct_poss = vec![];
+//         for y in 0..n { for x in 0..n {
+//             if self.destructive[y][x] && !is_house_or_source(y, x) {
+//                 destruct_poss.push((y, x));
+//             }
+//         }}
+//         let rnd = rand::thread_rng().gen_range(0, destruct_poss.len());
+//         let destruct_pos = destruct_poss[rnd];
+
+//         // 壊す点から隣接する家/水源以外を壊す(self.destructive を false に更新)
+//         let mut que = std::collections::VecDeque::new();
+//         self.destructive[destruct_pos.0][destruct_pos.1] = false;
+//         que.push_back(destruct_pos);
+//         while let Some((y, x)) = que.pop_front() {
+//             if is_house_or_source(y, x) {
+//                 continue;
+//             }
+//             for &(dy, dx) in &[(-1, 0), (1, 0), (0, -1), (0, 1)] {
+//                 if let Some((ny, nx)) = convert_index(y, dy, x, dx, n) {
+//                     if is_house_or_source(ny, nx) || !self.destructive[ny][nx] {
+//                         continue;
+//                     }
+//                     self.destructive[ny][nx] = false;
+//                     que.push_back((ny, nx));
+//                 }
+//             }
+//         }
+//     }
+
+//     fn construct(&mut self, field: &Field) {
+
+//     }
+
+//     fn done<R: BufRead>(&self, field: &mut Field, line_source: &mut LineSource<R>) {
+//         let mut visited = vec![vec![false; field.n]; field.n];
+//         let mut destuctive = vec![];
+//         for y in 0..field.n {
+//             for x in 0..field.n {
+//                 if !self.destructive[y][x] || visited[y][x] {
+//                     continue;
+//                 }
+//                 let mut que = std::collections::VecDeque::new();
+//                 que.push_back((y, x));
+//                 visited[y][x] = true;
+//                 while let Some((y, x)) = que.pop_front() {
+//                     destuctive.push((y, x));
+//                     for (dy, dx) in vec![(-1, 0), (1, 0), (0, -1), (0, 1)] {
+//                         if let Some((ny, nx)) = convert_index(y, dy, x, dx, field.n) {
+//                             if visited[ny][nx] || !self.destructive[ny][nx] {
+//                                 continue;
+//                             }
+//                             visited[ny][nx] = true;
+//                             que.push_back((ny, nx));
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+
+//         for &(y, x) in &destuctive {
+//             field.destruct(y, x, false, line_source);
+//         }
+//     }
+
+//     fn score(&mut self, field: &Field) -> i32 {
+//         if let Some(v) = self.score {
+//             return v;
+//         }
+//         // TODO: 条件を満たしているか？
+//         let mut res = 0;
+//         for y in 0..field.n {
+//             for x in 0..field.n {
+//                 if self.destructive[y][x] {
+//                     res += field.guess[y][x];
+//                 }
+//             }
+//         }
+//         self.score = Some(res);
+//         res
+//     } 
+// }
 
 struct Solver {
     n: usize,
@@ -557,8 +650,9 @@ impl Solver {
         // println!("# field init done");
 
         // init state
-        let mut current_state = State::new(&self.sources, &self.houses, &self.field);
-        current_state.init_state(&self.field);
+        // let mut current_state = State::new(&self.sources, &self.houses, &self.field);
+        // current_state.init_state(&self.field);
+        let mut current_state = self.field.generate_init_state();
         // println!("# state init done");
 
         // // claiming
@@ -571,7 +665,8 @@ impl Solver {
         // }
 
         // output
-        current_state.done(&mut self.field, line_source);
+        // current_state.done(&mut self.field, line_source);
+        self.field.done(&current_state, line_source);
     }
 }
 

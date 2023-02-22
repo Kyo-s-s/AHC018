@@ -82,24 +82,29 @@ struct Field {
     is_broken: Vec<Vec<bool>>,
     real: Vec<Vec<i32>>,
     total_cost: usize,
+    sampling: Vec<(usize, usize)>, // 水源、家 + 一定間隔で取得したpos
+    dist_path: Vec<Vec<(i32, Vec<(usize, usize)>)>>,
 }
 
 impl Field {
     fn new(n: usize, c: usize) -> Self {
         Self {
-            n, c, guess: vec![vec![0; n]; n], is_broken: vec![vec![false; n]; n], real: vec![vec![0; n]; n], total_cost: 0,
+            n, c, guess: vec![vec![0; n]; n], is_broken: vec![vec![false; n]; n], real: vec![vec![0; n]; n], total_cost: 0, sampling: vec![], dist_path: vec![],
         }
     }
 
+    // init
     fn guess_field<R: BufRead>(&mut self, sources: &Vec<(usize, usize)>, houses: &Vec<(usize, usize)>, line_source: &mut LineSource<R>) {
         let mut checks = vec![];
         for &(y, x) in sources {
             self.guess[y][x] = self.destruct(y, x, true, line_source);
             checks.push((y, x));
+            self.sampling.push((y, x));
         } 
         for &(y, x) in houses {
             self.guess[y][x] = self.destruct(y, x, true, line_source);
             checks.push((y, x));
+            self.sampling.push((y, x));
         }
 
         let step = (10..self.n).step_by(20).collect::<Vec<_>>();
@@ -109,6 +114,7 @@ impl Field {
 
         for &y in &step {
             for &x in &step {
+                self.sampling.push((y, x));
                 let min_dist = checks.iter().map(|&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).min().unwrap();
                 if min_dist <= arrowed_min_dist {
                     continue;
@@ -139,6 +145,14 @@ impl Field {
         for _ in 0..40 {
             self.guess_flatten();
         }
+
+        // sampling の各点から各点へのdist, ... を求めておく
+        for &s in &self.sampling {
+            self.dist_path.push(self.dijkstra_vec(s, &self.sampling));
+        }
+
+        // 頂点集合idとそれぞれの距離のみ見ながら、それらのpathを(s, t) のみ管理してufでmerge管理...すればいいかんじ？
+        // 焼きなましで高々115個の頂点のみを見ればよいのでうれしい
     }
 
     fn guess_flatten(&mut self) {
@@ -158,6 +172,108 @@ impl Field {
             }
         }
         self.guess = guess;
+    }
+
+    fn dijkstra(&self, s: (usize, usize), t: (usize, usize)) -> (i32, Vec<(usize, usize)>) {
+        let (sy, sx) = s;
+        let (ty, tx) = t;
+        let mut dist = vec![vec![std::i32::MAX; self.n]; self.n];
+        let mut que = std::collections::BinaryHeap::new();
+        que.push(std::cmp::Reverse((0, (sy, sx))));
+        dist[sy][sx] = 0;
+        let dyx = vec![(-1, 0), (1, 0), (0, -1), (0, 1)];
+        let cost = |y: usize, x: usize| {
+            self.guess[y][x]
+        };
+        while let Some(std::cmp::Reverse((d, (y, x)))) = que.pop() {
+            if y == ty && x == tx {
+                break;
+            }
+            if d > dist[y][x] {
+                continue;
+            }
+            for &(dy, dx) in &dyx {
+                if let Some((ny, nx)) = convert_index(y, dy, x, dx, self.n) {
+                    let c = cost(ny, nx);
+                    if dist[ny][nx] <= d + c {
+                        continue;
+                    }
+                    dist[ny][nx] = d + c;
+                    que.push(std::cmp::Reverse((d + c, (ny, nx))));
+                }
+            }
+        }
+        // 復元
+        let mut res = vec![(ty, tx)];
+        loop {
+            let &(y, x) = res.last().unwrap();
+            if dist[y][x] == 0 {
+                break;
+            }
+            if y == sy && x == sx {
+                break;
+            } 
+            // println!("# dist: {}, pos: {}, {}, cost: {}", dist[y][x], y, x, cost(y, x));
+            for &(dy, dx) in &dyx {
+                if let Some((py, px)) = convert_index(y, dy, x, dx, self.n) {
+                    if dist[y][x] == dist[py][px] + cost(y, x) {
+                        res.push((py, px));
+                        break;
+                    }
+                }
+            }
+        }
+        return (dist[ty][tx], res);
+    }
+
+    fn dijkstra_vec(&self, s: (usize, usize), v: &Vec<(usize, usize)>) -> Vec<(i32, Vec<(usize, usize)>)> {
+        let (sy, sx) = s;
+        let mut dist = vec![vec![std::i32::MAX; self.n]; self.n];
+        let mut que = std::collections::BinaryHeap::new();
+        que.push(std::cmp::Reverse((0, (sy, sx))));
+        dist[sy][sx] = 0;
+        let cost = |y: usize, x: usize| {
+            self.guess[y][x]
+        };
+        while let Some(std::cmp::Reverse((d, (y, x)))) = que.pop() {
+            if d > dist[y][x] {
+                continue;
+            }
+            for &(dy, dx) in &[(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                if let Some((ny, nx)) = convert_index(y, dy, x, dx, self.n) {
+                    let c = cost(ny, nx);
+                    if dist[ny][nx] <= d + c {
+                        continue;
+                    }
+                    dist[ny][nx] = d + c;
+                    que.push(std::cmp::Reverse((d + c, (ny, nx))));
+                }
+            }
+        }
+
+        let mut res = vec![];
+        for &(ty, tx) in v {
+            let mut path = vec![(ty, tx)];
+            loop {
+                let &(y, x) = path.last().unwrap();
+                if dist[y][x] == 0 {
+                    break;
+                }
+                if y == sy && x == sx {
+                    break;
+                } 
+                for &(dy, dx) in &[(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                    if let Some((py, px)) = convert_index(y, dy, x, dx, self.n) {
+                        if dist[y][x] == dist[py][px] + cost(y, x) {
+                            path.push((py, px));
+                            break;
+                        }
+                    }
+                }
+            }
+            res.push((dist[ty][tx], path));
+        }
+        res
     }
 
     fn query<R: BufRead>(&mut self, y: usize, x: usize, power: i32, line_source: &mut LineSource<R>) -> Responce {
@@ -284,8 +400,10 @@ impl State {
                 if u_id == v_id {
                     continue;
                 }
-                let (dist, path) = self.init_dijkstra(field, u, v);
+                let (dist, path) = field.dijkstra(u, v);
                 edges.push((dist, u_id, v_id, path));
+                // let (dist, path) = &field.dijkstra_vec(u, &vec![v])[0];
+                // edges.push((dist.clone(), u_id, v_id, path.clone()));
             }
         }
         edges.sort_by(|a, b| a.0.cmp(&b.0));
@@ -356,58 +474,6 @@ impl State {
 
     fn construct(&mut self, field: &Field) {
 
-    }
-
-    fn init_dijkstra(&self, field: &Field, s: (usize, usize), t: (usize, usize)) -> (i32, Vec<(usize, usize)>) {
-        let (sy, sx) = s;
-        let (ty, tx) = t;
-        let mut dist = vec![vec![std::i32::MAX; field.n]; field.n];
-        let mut que = std::collections::BinaryHeap::new();
-        que.push(std::cmp::Reverse((0, (sy, sx))));
-        dist[sy][sx] = 0;
-        let dyx = vec![(-1, 0), (1, 0), (0, -1), (0, 1)];
-        let cost = |y: usize, x: usize| {
-            field.guess[y][x]
-        };
-        while let Some(std::cmp::Reverse((d, (y, x)))) = que.pop() {
-            if y == ty && x == tx {
-                break;
-            }
-            if d > dist[y][x] {
-                continue;
-            }
-            for &(dy, dx) in &dyx {
-                if let Some((ny, nx)) = convert_index(y, dy, x, dx, field.n) {
-                    let c = cost(ny, nx);
-                    if dist[ny][nx] <= d + c {
-                        continue;
-                    }
-                    dist[ny][nx] = d + c;
-                    que.push(std::cmp::Reverse((d + c, (ny, nx))));
-                }
-            }
-        }
-        // 復元
-        let mut res = vec![(ty, tx)];
-        loop {
-            let &(y, x) = res.last().unwrap();
-            if dist[y][x] == 0 {
-                break;
-            }
-            if y == sy && x == sx {
-                break;
-            } 
-            // println!("# dist: {}, pos: {}, {}, cost: {}", dist[y][x], y, x, cost(y, x));
-            for &(dy, dx) in &dyx {
-                if let Some((py, px)) = convert_index(y, dy, x, dx, field.n) {
-                    if dist[y][x] == dist[py][px] + cost(y, x) {
-                        res.push((py, px));
-                        break;
-                    }
-                }
-            }
-        }
-        return (dist[ty][tx], res);
     }
 
     fn done<R: BufRead>(&self, field: &mut Field, line_source: &mut LineSource<R>) {

@@ -1,4 +1,4 @@
-use std::{io::{BufReader, BufRead}, collections::BTreeSet, string};
+use std::{io::{BufReader, BufRead}, collections::{BTreeSet, VecDeque}, string};
 
 use proconio::{source::line::LineSource, input};
 use rand::Rng;
@@ -107,30 +107,20 @@ impl Field {
     }
 
     // init
-    fn guess_field<R: BufRead>(&mut self, sources: &Vec<(usize, usize)>, houses: &Vec<(usize, usize)>, line_source: &mut LineSource<R>) {
+    fn guess_field_init<R: BufRead>(&mut self, sources: &Vec<(usize, usize)>, houses: &Vec<(usize, usize)>, lim: i32, line_source: &mut LineSource<R>) {
         let mut checks = vec![];
         for &(y, x) in sources {
-            self.guess[y][x] = self.destruct(y, x, true, houses, line_source);
+            self.guess[y][x] = self.destruct(y, x, lim, houses, line_source);
             checks.push((y, x));
             self.sources_idx.push(self.sampling.len());
             self.sampling.push((y, x));
         } 
         for &(y, x) in houses {
-            self.guess[y][x] = self.destruct(y, x, true, houses, line_source);
+            self.guess[y][x] = self.destruct(y, x, lim, houses, line_source);
             checks.push((y, x));
             self.houses_idx.push(self.sampling.len());
             self.sampling.push((y, x));
         }
-
-        // let step = (8..self.n).step_by(12).collect::<Vec<_>>();
-        // let step = 
-        //     if self.k >= 9 {
-        //         (7..self.n).step_by(12).collect::<Vec<_>>()
-        //     // } else if self.w <= 1 {
-        //         // (12..self.n).step_by(25).collect::<Vec<_>>()
-        //     } else {
-        //         (10..self.n).step_by(20).collect::<Vec<_>>()
-        //     };
 
         let arrowed_min_dist = 5;
         let rejected_min_dist = 75;
@@ -151,8 +141,7 @@ impl Field {
                 steps.push((y, x));
             }
         }
-        // べつに、サンプリングしていない点でもそれを使ってごにょごにょしていいじゃん！
-        // ただ、これやったところで誤差レベル...？
+
         for &(y, x) in &steps {
             let min_dist = checks.iter().map(|&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).min().unwrap();
             if min_dist <= arrowed_min_dist {
@@ -166,7 +155,7 @@ impl Field {
                 self.guess[y][x] = 4500;
                 continue;
             }
-            self.guess[y][x] = self.destruct(y, x, true, &vec![], line_source);
+            self.guess[y][x] = self.destruct(y, x, lim, &vec![], line_source);
             checks.push((y, x));
         }
 
@@ -180,9 +169,6 @@ impl Field {
                 self.guess[y][x] = self.guess[ny][nx];
             }
         }
-        // for _ in 0..40 {
-        // for _ in 0..30 {
-        // for _ in 0..20 {
         for _ in 0..15 {
             self.guess_flatten();
         }
@@ -194,6 +180,55 @@ impl Field {
 
         // 頂点集合idとそれぞれの距離のみ見ながら、それらのpathを(s, t) のみ管理してufでmerge管理...すればいいかんじ？
         // 焼きなましで高々115個の頂点のみを見ればよいのでうれしい
+    }
+
+    fn guess_field_update<R: BufRead>(&mut self, cources: &Vec<(usize, usize)>, houses: &Vec<(usize, usize)>, lim: i32, state: &State, line_source: &mut LineSource<R>) {
+        // sampling の中でstateの距離が基準以下のものについて更新していく
+        let mut dist = vec![vec![std::i32::MAX; self.n]; self.n];
+        // state のやつをinit
+        let mut deque = VecDeque::new();
+        for &(s, t) in &state.edges {
+            let (_, path) = &self.dist_path[s][t];
+            for &(y, x) in path {
+                dist[y][x] = 0;
+                deque.push_back((y, x));
+            }
+        }
+
+        while let Some((y, x)) = deque.pop_front() {
+            for &(dy, dx) in &[(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                if let Some((ny, nx)) = convert_index(y, dy, x, dx, self.n) {
+                    if dist[ny][nx] > dist[y][x] + 1 {
+                        dist[ny][nx] = dist[y][x] + 1;
+                        deque.push_back((ny, nx));
+                    }
+                }
+            }
+        }
+
+        // guess 更新
+        let max_dis = 10;
+        for &(y, x) in &self.sampling.clone() {
+            if dist[y][x] > max_dis {
+                continue;
+            }
+            self.guess[y][x] = self.destruct(y, x, lim, houses, line_source);
+        }
+
+        for y in 0..self.n {
+            for x in 0..self.n {
+                let &(ny, nx) = self.sampling.iter().min_by_key(|&&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).unwrap();
+                self.guess[y][x] = self.guess[ny][nx];
+            }
+        }
+
+        for _ in 0..15 {
+            self.guess_flatten();
+        }
+        // dist_pathを更新
+        for &s in &self.sampling {
+            self.dist_path.push(self.dijkstra_vec(s, &self.sampling));
+        }
     }
 
     fn guess_flatten(&mut self) {
@@ -361,7 +396,7 @@ impl Field {
     }
 
     // guess == false ならhousesは不要、&vec![]でよい
-    fn destruct<R: BufRead>(&mut self, y: usize, x: usize, guess: bool, houses: &Vec<(usize, usize)>, line_source: &mut LineSource<R>) -> i32 {
+    fn destruct<R: BufRead>(&mut self, y: usize, x: usize, lim: i32, houses: &Vec<(usize, usize)>, line_source: &mut LineSource<R>) -> i32 {
         if self.is_broken[y][x] {
             return self.real[y][x];
         }
@@ -378,7 +413,7 @@ impl Field {
             128 => vec![0, 50, 120, 220, 410, 730, 1170, 1700, 2200, 2700, 3500, 4000, 5000],
               _ => vec![0, 25, 60, 120, 210, 350, 570, 960, 1600, 2800, 5000],
         };
-        if guess {
+        if lim != 5000 {
             // house なら破壊する
             let lim = if houses.iter().any(|&(ty, tx)| ty == y && tx == x) {
                 5000
@@ -478,7 +513,7 @@ impl Field {
             }
         }
         for &(y, x) in &break_pos {
-            self.destruct(y, x, false, &vec![], line_source);
+            self.destruct(y, x, 5000, &vec![], line_source);
         }
     }
 
@@ -495,7 +530,7 @@ impl Field {
         res
     }
 
-    fn claim(&self, state: &State) -> State {
+    fn climb(&self, state: &State) -> State {
         // 確率で色々する
         let mut keys = state.keys.clone();
         // TODO
@@ -615,31 +650,35 @@ impl Solver {
     }
 
     fn solve<R: BufRead>(&mut self, line_source: &mut LineSource<R>, timer: &Timer) {
+
         // field init
-        self.field.guess_field(&self.sources, &self.houses, line_source);
-        timer.now_time(("finish guess_field").to_string());
+        self.field.guess_field_init(&self.sources, &self.houses, 500, line_source);
+        timer.now_time(("finish guess_field_init").to_string());
         // ここまでで3.5secつかってるけど、testerの方で吸われていそう
 
         // init state
-        let mut init_state = self.field.generate_init_state();
+        let init_state = self.field.generate_init_state();
         timer.now_time(("finish generate init_state").to_string());
 
-        let mut current_state = init_state.clone();
+        self.field.guess_field_update(&self.sources, &self.houses, 1000, &init_state, line_source);
+        timer.now_time(("finish guess_field_update").to_string());
+
+        let mut current_state = self.field.generate_init_state();
 
         let mut cnt = 0;
         let mut acc = 0;
         // // claiming
         // while timer.is_timeout(4.5) {
         // ローカルだと愚直までしか回っていない？？？
-        // let tl = 4.5;
-        let tl = 10.0;
+        let tl = 4.5;
+        // let tl = 10.0;
         // 提出するときは4.5とかにする！
 
         while timer.is_timeout(tl) {
             cnt += 1;
             let mut nxt_state = init_state.clone();
             for _ in 0..100 {
-                let mut tmp_state = self.field.claim(&nxt_state);
+                let mut tmp_state = self.field.climb(&nxt_state);
                 if self.field.state_score(&mut tmp_state) < self.field.state_score(&mut nxt_state) {
                     nxt_state = tmp_state;
                 }

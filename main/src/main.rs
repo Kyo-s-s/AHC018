@@ -629,7 +629,13 @@ impl Solver {
         let mut cnt = 0;
         let mut acc = 0;
         // // claiming
-        while timer.is_timeout(4.5) {
+        // while timer.is_timeout(4.5) {
+        // ローカルだと愚直までしか回っていない？？？
+        // let tl = 4.5;
+        let tl = 10.0;
+        // 提出するときは4.5とかにする！
+
+        while timer.is_timeout(tl) {
             cnt += 1;
             let mut nxt_state = init_state.clone();
             for _ in 0..100 {

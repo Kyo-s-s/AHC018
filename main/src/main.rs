@@ -85,6 +85,8 @@ fn convert_index(y: usize, dy: i32, x: usize, dx: i32, n: usize) -> Option<(usiz
 
 struct Field {
     n: usize,
+    w: usize,
+    k: usize,
     c: usize,
     guess: Vec<Vec<i32>>,
     is_broken: Vec<Vec<bool>>,
@@ -97,9 +99,9 @@ struct Field {
 }
 
 impl Field {
-    fn new(n: usize, c: usize) -> Self {
+    fn new(n: usize, w: usize, k: usize, c: usize) -> Self {
         Self {
-            n, c, guess: vec![vec![0; n]; n], is_broken: vec![vec![false; n]; n], real: vec![vec![0; n]; n], total_cost: 0, sampling: vec![], dist_path: vec![],
+            n, w, k, c, guess: vec![vec![0; n]; n], is_broken: vec![vec![false; n]; n], real: vec![vec![0; n]; n], total_cost: 0, sampling: vec![], dist_path: vec![],
             houses_idx: vec![], sources_idx: vec![],
         }
     }
@@ -108,41 +110,64 @@ impl Field {
     fn guess_field<R: BufRead>(&mut self, sources: &Vec<(usize, usize)>, houses: &Vec<(usize, usize)>, line_source: &mut LineSource<R>) {
         let mut checks = vec![];
         for &(y, x) in sources {
-            self.guess[y][x] = self.destruct(y, x, true, line_source);
+            self.guess[y][x] = self.destruct(y, x, true, houses, line_source);
             checks.push((y, x));
             self.sources_idx.push(self.sampling.len());
             self.sampling.push((y, x));
         } 
         for &(y, x) in houses {
-            self.guess[y][x] = self.destruct(y, x, true, line_source);
+            self.guess[y][x] = self.destruct(y, x, true, houses, line_source);
             checks.push((y, x));
             self.houses_idx.push(self.sampling.len());
             self.sampling.push((y, x));
         }
 
-        let step = (10..self.n).step_by(20).collect::<Vec<_>>();
+        // let step = (8..self.n).step_by(12).collect::<Vec<_>>();
+        // let step = 
+        //     if self.k >= 9 {
+        //         (7..self.n).step_by(12).collect::<Vec<_>>()
+        //     // } else if self.w <= 1 {
+        //         // (12..self.n).step_by(25).collect::<Vec<_>>()
+        //     } else {
+        //         (10..self.n).step_by(20).collect::<Vec<_>>()
+        //     };
 
         let arrowed_min_dist = 5;
         let rejected_min_dist = 75;
 
+        // let step = (10..self.n).step_by(20).collect::<Vec<_>>();
+        let step = (8..self.n).step_by(12).collect::<Vec<_>>();
+        let mut steps = vec![];
+        let mut f1 = true;
         for &y in &step {
+            f1 ^= true;
+            let mut f2 = true;
             for &x in &step {
+                f2 ^= true;
                 self.sampling.push((y, x));
-                let min_dist = checks.iter().map(|&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).min().unwrap();
-                if min_dist <= arrowed_min_dist {
+                if f1 ^ f2 {
                     continue;
                 }
-                // 一番近いhouses, sourcesが規定値以上離れてるならサボる
-                let near_house_dist = houses.iter().map(|&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).min().unwrap();
-                let near_source_dist = sources.iter().map(|&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).min().unwrap();
-                if near_house_dist >= rejected_min_dist && near_source_dist >= rejected_min_dist {
-                    checks.push((y, x));
-                    self.guess[y][x] = 4500;
-                    continue;
-                }
-                self.guess[y][x] = self.destruct(y, x, true, line_source);
-                checks.push((y, x));
+                steps.push((y, x));
             }
+        }
+        // べつに、サンプリングしていない点でもそれを使ってごにょごにょしていいじゃん！
+        // ただ、これやったところで誤差レベル...？
+        for &(y, x) in &steps {
+            let min_dist = checks.iter().map(|&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).min().unwrap();
+            if min_dist <= arrowed_min_dist {
+                continue;
+            }
+            // 一番近いhouses, sourcesが規定値以上離れてるならサボる
+            let near_house_dist = houses.iter().map(|&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).min().unwrap();
+            let near_source_dist = sources.iter().map(|&(cy, cx)| (cy as i32 - y as i32).abs() + (cx as i32 - x as i32).abs()).min().unwrap();
+            if near_house_dist >= rejected_min_dist && near_source_dist >= rejected_min_dist {
+                checks.push((y, x));
+                self.guess[y][x] = 4500;
+                continue;
+            }
+            self.guess[y][x] = self.destruct(y, x, true, &vec![], line_source);
+            checks.push((y, x));
         }
 
         for y in 0..self.n {
@@ -248,7 +273,7 @@ impl Field {
         dist[sy][sx] = 0;
         let cost = |y: usize, x: usize| {
             // self.guess[y][x]
-            std::cmp::max(1, self.guess[y][x] - self.real[y][x])
+            std::cmp::max(1, self.guess[y][x] - self.real[y][x]) + self.c as i32
         };
         while let Some(std::cmp::Reverse((d, (y, x)))) = que.pop() {
             if d > dist[y][x] {
@@ -318,7 +343,8 @@ impl Field {
         }
     }
 
-    fn destruct<R: BufRead>(&mut self, y: usize, x: usize, guess: bool, line_source: &mut LineSource<R>) -> i32 {
+    // guess == false ならhousesは不要、&vec![]でよい
+    fn destruct<R: BufRead>(&mut self, y: usize, x: usize, guess: bool, houses: &Vec<(usize, usize)>, line_source: &mut LineSource<R>) -> i32 {
         if self.is_broken[y][x] {
             return self.real[y][x];
         }
@@ -331,13 +357,21 @@ impl Field {
              16 => vec![0, 20, 40, 70, 120, 190, 280, 395, 540, 760, 1080, 1515, 2160, 3000, 4000, 5000],
              32 => vec![0, 20, 40, 70, 120, 190, 280, 395, 540, 760, 1080, 1515, 2160, 3000, 4000, 5000],
              64 => vec![0, 30, 90, 220, 410, 730, 1170, 1700, 2200, 2700, 3500, 4000, 5000],
-            128 => vec![0, 30, 90, 220, 410, 730, 1170, 1700, 2200, 2700, 3500, 4000, 5000],
+            // 128 => vec![0, 30, 90, 220, 410, 730, 1170, 1700, 2200, 2700, 3500, 4000, 5000],
+            128 => vec![0, 50, 120, 220, 410, 730, 1170, 1700, 2200, 2700, 3500, 4000, 5000],
               _ => vec![0, 25, 60, 120, 210, 350, 570, 960, 1600, 2800, 5000],
         };
         if guess {
+            // house なら破壊する
+            let lim = if houses.iter().any(|&(ty, tx)| ty == y && tx == x) {
+                5000
+            } else {
+                500
+            };
+
             // 最後サボる
             for i in 0..v.len() - 1 {
-                if v[i + 1] >= 500 {
+                if v[i + 1] >= lim {
                     break;
                 }
                 self.query(y, x, v[i + 1] - v[i], line_source);
@@ -348,7 +382,22 @@ impl Field {
             return 4500
         } 
 
+        // v を2倍にする
+        let mut v2 = vec![];
+        let mut u = 1;
+        for &e in &v {
+            if let Some(&last) = v2.last() {
+                u -= 1;
+                if u < 0 {
+                    v2.push((last + e) / 2);
+                }
+            } 
+            v2.push(e);
+        }
+        let v = v2;
+
         // 隣接マスにrealが有効なものがある -> その値を叩く   
+
         let dxy = vec![(-1, 0), (1, 0), (0, -1), (0, 1)];
         let mut i = 0;
         for &(dy, dx) in &(dxy) {
@@ -363,6 +412,7 @@ impl Field {
                 if i > 1 {
                     i = (i as i32 - 1) as usize;
                 }
+
                 self.query(y, x, v[i], line_source);
                 break;
             } 
@@ -411,7 +461,7 @@ impl Field {
             }
         }
         for &(y, x) in &break_pos {
-            self.destruct(y, x, false, line_source);
+            self.destruct(y, x, false, &vec![], line_source);
         }
     }
 
@@ -543,7 +593,7 @@ impl Solver {
             houses: [(usize, usize); k],
         }
         Self {
-            n, w, k, c, sources, houses, field: Field::new(n, c),
+            n, w, k, c, sources, houses, field: Field::new(n, w, k, c),
         }
     }
 
@@ -554,26 +604,32 @@ impl Solver {
         // ここまでで3.5secつかってるけど、testerの方で吸われていそう
 
         // init state
-        let mut current_state = self.field.generate_init_state();
+        let mut init_state = self.field.generate_init_state();
         timer.now_time(("finish generate init_state").to_string());
 
-        let mut current_states = vec![];
-        for _ in 0..10 {
-            current_states.push(current_state.clone());
-        }
-
+        let mut current_state = init_state.clone();
 
         let mut cnt = 0;
+        let mut acc = 0;
         // // claiming
         while timer.is_timeout(4.5) {
             cnt += 1;
-            let mut nxt_state = self.field.claim(&current_state);
+            let mut nxt_state = init_state.clone();
+            for _ in 0..100 {
+                let mut tmp_state = self.field.claim(&nxt_state);
+                if self.field.state_score(&mut tmp_state) < self.field.state_score(&mut nxt_state) {
+                    nxt_state = tmp_state;
+                }
+            }            
+
             if self.field.state_score(&mut nxt_state) < self.field.state_score(&mut current_state) {
                 current_state = nxt_state;
+                acc += 1;
             }
+
         }
         
-        timer.now_time(format!("count: {}", cnt));
+        timer.now_time(format!("count: {}, accept: {}", cnt, acc));
 
         // output
         self.field.done(&current_state, line_source);

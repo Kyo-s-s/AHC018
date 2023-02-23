@@ -252,9 +252,12 @@ AHC018のコードです。
     min: (18027, '0467')
     ```
     提出する -> https://atcoder.jp/contests/ahc018/submissions/39118697, 6419042点
+
 - [ ] State.destructive `Vec<Vec<bool>>` だが、無駄が多いので`BtreeSet<(usize, usize)>`にしたほうがよい...？
 
-- [ ] pythonでW, Kごとに分けて集計するように
+- [x] pythonでW, Kごとに分けて集計するように
+
+- そもそも、山登り殆ど改善されていない
 
 - グリッドで情報を持って、N*NのUnionFindをもってやる を実装する！
     - 詳細詰める

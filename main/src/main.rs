@@ -624,32 +624,37 @@ impl Solver {
         let mut init_state = self.field.generate_init_state();
         timer.now_time(("finish generate init_state").to_string());
 
-        let mut current_state = init_state.clone();
+        // let mut current_state = init_state.clone();
+        let mut current_states = vec![];
+        for _ in 0..20 {
+            current_states.push(init_state.clone());
+        }
+
+        // let tl = 4.5;
+        let tl = 10.0;
 
         let mut cnt = 0;
         let mut acc = 0;
         // // claiming
-        // while timer.is_timeout(4.5) {
-        // ローカルだと愚直までしか回っていない？？？
-        // let tl = 4.5;
-        let tl = 10.0;
-        // 提出するときは4.5とかにする！
-
         while timer.is_timeout(tl) {
             cnt += 1;
-            let mut nxt_state = init_state.clone();
-            for _ in 0..100 {
-                let mut tmp_state = self.field.claim(&nxt_state);
-                if self.field.state_score(&mut tmp_state) < self.field.state_score(&mut nxt_state) {
-                    nxt_state = tmp_state;
+            let mut next_states = vec![];
+            for state in &mut current_states {
+                let mut next_state = self.field.claim(state);
+                if self.field.state_score(&mut next_state) < self.field.state_score(state) {
+                    next_states.push(next_state.clone());
+                } else {
+                    next_states.push(state.clone());
                 }
-            }            
-
-            if self.field.state_score(&mut nxt_state) < self.field.state_score(&mut current_state) {
-                current_state = nxt_state;
-                acc += 1;
             }
-
+            current_states = next_states;
+        }
+        
+        let mut current_state = &mut init_state;
+        for state in &mut current_states {
+            if self.field.state_score(current_state) > self.field.state_score(state) {
+                current_state = state;
+            }
         }
         
         timer.now_time(format!("count: {}, accept: {}", cnt, acc));
@@ -658,7 +663,7 @@ impl Solver {
         self.field.guess_output(&self.sources, &self.houses);
 
         // output
-        self.field.done(&current_state, line_source);
+        self.field.done(current_state, line_source);
 
 
     }

@@ -251,11 +251,21 @@ AHC018のコードです。
     ave: 139227.442
     min: (18027, '0467')
     ```
-    提出する -> https://atcoder.jp/contests/ahc018/submissions/39118697, 6419042点
+    提出する -> https://atcoder.jp/contests/ahc018/submissions/39118697, 6,419,042点
 
 - [ ] State.destructive `Vec<Vec<bool>>` だが、無駄が多いので`BtreeSet<(usize, usize)>`にしたほうがよい...？
 
 - [x] pythonでW, Kごとに分けて集計するように
+
+- パラメータ調整しまくり！
+    ```
+    500/500
+    total: 66831857
+    max: (641566, '0449')
+    ave: 133663.714
+    min: (22408, '0332')
+    ```
+    https://atcoder.jp/contests/ahc018/submissions/39129966, 6,071,811点
 
 - そもそも、山登り殆ど改善されていない
 

@@ -180,7 +180,10 @@ impl Field {
                 self.guess[y][x] = self.guess[ny][nx];
             }
         }
-        for _ in 0..40 {
+        // for _ in 0..40 {
+        // for _ in 0..30 {
+        // for _ in 0..20 {
+        for _ in 0..15 {
             self.guess_flatten();
         }
 
@@ -210,6 +213,20 @@ impl Field {
             }
         }
         self.guess = guess;
+    }
+
+    // guess_field をerrで出力
+    fn guess_output(&self, sources: &Vec<(usize, usize)>, houses: &Vec<(usize, usize)>) {
+        eprintln!("{} {} {} {}", self.n, self.w, self.k, self.c);
+        for y in 0..self.n {
+            eprintln!("{}", self.guess[y].iter().map(|&x| x.to_string()).collect::<Vec<_>>().join(" "));
+        }
+        for &(y, x) in sources {
+            eprintln!("{} {} ", y, x);
+        }
+        for &(y, x) in houses {
+            eprintln!("{} {} ", y, x);
+        }
     }
 
     fn dijkstra(&self, s: (usize, usize), t: (usize, usize)) -> (i32, Vec<(usize, usize)>) {
@@ -631,8 +648,12 @@ impl Solver {
         
         timer.now_time(format!("count: {}, accept: {}", cnt, acc));
 
+        // eprintln!
+        self.field.guess_output(&self.sources, &self.houses);
+
         // output
         self.field.done(&current_state, line_source);
+
 
     }
 }

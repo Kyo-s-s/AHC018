@@ -212,6 +212,9 @@ impl Field {
             if dist[y][x] > max_dis {
                 continue;
             }
+            if self.real[y][x] == 0 {
+                continue;
+            }
             self.guess[y][x] = self.destruct(y, x, lim, houses, line_source);
         }
 
@@ -651,8 +654,11 @@ impl Solver {
 
     fn solve<R: BufRead>(&mut self, line_source: &mut LineSource<R>, timer: &Timer) {
 
+        let init_lim = 800;
+        let update_lim = 1000;
+
         // field init
-        self.field.guess_field_init(&self.sources, &self.houses, 500, line_source);
+        self.field.guess_field_init(&self.sources, &self.houses, init_lim, line_source);
         timer.now_time(("finish guess_field_init").to_string());
         // ここまでで3.5secつかってるけど、testerの方で吸われていそう
 
@@ -660,7 +666,7 @@ impl Solver {
         let init_state = self.field.generate_init_state();
         timer.now_time(("finish generate init_state").to_string());
 
-        self.field.guess_field_update(&self.sources, &self.houses, 1000, &init_state, line_source);
+        self.field.guess_field_update(&self.sources, &self.houses, update_lim, &init_state, line_source);
         timer.now_time(("finish guess_field_update").to_string());
 
         let mut current_state = self.field.generate_init_state();
@@ -670,8 +676,8 @@ impl Solver {
         // // claiming
         // while timer.is_timeout(4.5) {
         // ローカルだと愚直までしか回っていない？？？
-        let tl = 4.5;
-        // let tl = 10.0;
+        // let tl = 4.5;
+        let tl = 10.0;
         // 提出するときは4.5とかにする！
 
         while timer.is_timeout(tl) {

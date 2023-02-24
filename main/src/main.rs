@@ -126,7 +126,8 @@ impl Field {
         let rejected_min_dist = 75;
 
         // let step = (10..self.n).step_by(20).collect::<Vec<_>>();
-        let step = (8..self.n).step_by(12).collect::<Vec<_>>();
+        // let step = (8..self.n).step_by(12).collect::<Vec<_>>();
+        let step = (4..self.n).step_by(12).collect::<Vec<_>>();
         // let step = (7..self.n).step_by(11).collect::<Vec<_>>();
         let mut steps = vec![];
         let mut f1 = true;
@@ -135,10 +136,12 @@ impl Field {
             let mut f2 = true;
             for &x in &step {
                 f2 ^= true;
-                self.sampling.push((y, x));
+                // 1マスずつ開ける
                 if f1 ^ f2 {
                     continue;
                 }
+                // ほんとは全部入れたいけど実行時間ヤバ
+                self.sampling.push((y, x));
                 steps.push((y, x));
             }
         }
@@ -183,7 +186,7 @@ impl Field {
         // 焼きなましで高々115個の頂点のみを見ればよいのでうれしい
     }
 
-    fn guess_field_update<R: BufRead>(&mut self, cources: &Vec<(usize, usize)>, houses: &Vec<(usize, usize)>, lim: i32, state: &State, line_source: &mut LineSource<R>) {
+    fn guess_field_update<R: BufRead>(&mut self, sources: &Vec<(usize, usize)>, houses: &Vec<(usize, usize)>, lim: i32, state: &State, line_source: &mut LineSource<R>) {
         // sampling の中でstateの距離が基準以下のものについて更新していく
         let mut dist = vec![vec![std::i32::MAX; self.n]; self.n];
         // state のやつをinit
@@ -213,6 +216,7 @@ impl Field {
             if dist[y][x] > max_dis {
                 continue;
             }
+            // 新規追加無し
             if self.real[y][x] == 0 {
                 continue;
             }
@@ -422,7 +426,8 @@ impl Field {
             let lim = if houses.iter().any(|&(ty, tx)| ty == y && tx == x) {
                 5000
             } else {
-                500
+                // 500
+                lim
             };
 
             // 最後サボる
@@ -667,8 +672,11 @@ impl Solver {
 
     fn solve<R: BufRead>(&mut self, line_source: &mut LineSource<R>, timer: &Timer) {
 
-        let init_lim = 500;
-        let update_lim = 2000;
+        // 250, 1000 => 65,400,366
+        // 350, 1000 => 
+
+        let init_lim = 350;
+        let update_lim = 1000;
 
         // field init
         self.field.guess_field_init(&self.sources, &self.houses, init_lim, line_source);
@@ -684,12 +692,14 @@ impl Solver {
 
         // let mut current_state = init_state.clone();
         let mut current_states = vec![];
-        for _ in 0..20 {
+        // for _ in 0..20 {
+        for _ in 0..5 {
             current_states.push(init_state.clone());
         }
 
         // let tl = 4.5;
         let tl = 10.0;
+        // let tl = 0.0;
 
         let mut cnt = 0;
         let mut acc = 0;

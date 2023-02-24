@@ -127,6 +127,7 @@ impl Field {
 
         // let step = (10..self.n).step_by(20).collect::<Vec<_>>();
         let step = (8..self.n).step_by(12).collect::<Vec<_>>();
+        // let step = (7..self.n).step_by(11).collect::<Vec<_>>();
         let mut steps = vec![];
         let mut f1 = true;
         for &y in &step {
@@ -465,7 +466,13 @@ impl Field {
                     i += 1;
                 }
                 if i > 1 {
-                    i = (i as i32 - 1) as usize;
+                    if self.c < 64 {
+                        i = (i as i32 - 1) as usize;
+                    } else {
+                        if rand(0, 2) == 1 {
+                            i = (i as i32 - 1) as usize;
+                        }
+                    }
                 }
 
                 self.query(y, x, v[i], line_source);
@@ -536,14 +543,20 @@ impl Field {
     fn climb(&self, state: &State) -> State {
         // 確率で色々する
         let mut keys = state.keys.clone();
-        // TODO
+        if rand(0, 2) == 0 {
+            self.state_erase_key(&mut keys);
+        }
         let cnt = rand(1, 3);
         for _ in 0..cnt {
-            match rand(0, 2) {
-                1 => self.state_add_key(&mut keys),
-                _ => self.state_erase_key(&mut keys),
-            }
+            self.state_add_key(&mut keys);
         }
+        // let cnt = rand(1, 3);
+        // for _ in 0..cnt {
+        //     match rand(0, 2) {
+        //         1 => self.state_add_key(&mut keys),
+        //         _ => self.state_erase_key(&mut keys),
+        //     }
+        // }
         self.state_generate(&keys)
     }
 
@@ -654,8 +667,8 @@ impl Solver {
 
     fn solve<R: BufRead>(&mut self, line_source: &mut LineSource<R>, timer: &Timer) {
 
-        let init_lim = 800;
-        let update_lim = 1000;
+        let init_lim = 500;
+        let update_lim = 2000;
 
         // field init
         self.field.guess_field_init(&self.sources, &self.houses, init_lim, line_source);
@@ -667,34 +680,39 @@ impl Solver {
         timer.now_time(("finish generate init_state").to_string());
 
         self.field.guess_field_update(&self.sources, &self.houses, update_lim, &init_state, line_source);
-        timer.now_time(("finish guess_field_update").to_string());
+        let mut init_state = self.field.generate_init_state();
 
-        let mut current_state = self.field.generate_init_state();
+        // let mut current_state = init_state.clone();
+        let mut current_states = vec![];
+        for _ in 0..20 {
+            current_states.push(init_state.clone());
+        }
+
+        // let tl = 4.5;
+        let tl = 10.0;
 
         let mut cnt = 0;
         let mut acc = 0;
         // // claiming
-        // while timer.is_timeout(4.5) {
-        // ローカルだと愚直までしか回っていない？？？
-        // let tl = 4.5;
-        let tl = 10.0;
-        // 提出するときは4.5とかにする！
-
         while timer.is_timeout(tl) {
             cnt += 1;
-            let mut nxt_state = init_state.clone();
-            for _ in 0..100 {
-                let mut tmp_state = self.field.climb(&nxt_state);
-                if self.field.state_score(&mut tmp_state) < self.field.state_score(&mut nxt_state) {
-                    nxt_state = tmp_state;
+            let mut next_states = vec![];
+            for state in &mut current_states {
+                let mut next_state = self.field.climb(state);
+                if self.field.state_score(&mut next_state) < self.field.state_score(state) {
+                    next_states.push(next_state.clone());
+                } else {
+                    next_states.push(state.clone());
                 }
-            }            
-
-            if self.field.state_score(&mut nxt_state) < self.field.state_score(&mut current_state) {
-                current_state = nxt_state;
-                acc += 1;
             }
-
+            current_states = next_states;
+        }
+        
+        let mut current_state = &mut init_state;
+        for state in &mut current_states {
+            if self.field.state_score(current_state) > self.field.state_score(state) {
+                current_state = state;
+            }
         }
         
         timer.now_time(format!("count: {}, accept: {}", cnt, acc));
@@ -703,7 +721,7 @@ impl Solver {
         self.field.guess_output(&self.sources, &self.houses);
 
         // output
-        self.field.done(&current_state, line_source);
+        self.field.done(current_state, line_source);
 
 
     }

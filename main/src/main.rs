@@ -137,6 +137,7 @@ impl Field {
 
         // let step = (10..self.n).step_by(20).collect::<Vec<_>>();
         let step = (8..self.n).step_by(12).collect::<Vec<_>>();
+        // let step = (7..self.n).step_by(11).collect::<Vec<_>>();
         let mut steps = vec![];
         let mut f1 = true;
         for &y in &step {
@@ -427,7 +428,13 @@ impl Field {
                     i += 1;
                 }
                 if i > 1 {
-                    i = (i as i32 - 1) as usize;
+                    if self.c < 64 {
+                        i = (i as i32 - 1) as usize;
+                    } else {
+                        if rand(0, 2) == 1 {
+                            i = (i as i32 - 1) as usize;
+                        }
+                    }
                 }
 
                 self.query(y, x, v[i], line_source);
@@ -498,14 +505,20 @@ impl Field {
     fn claim(&self, state: &State) -> State {
         // 確率で色々する
         let mut keys = state.keys.clone();
-        // TODO
+        if rand(0, 2) == 0 {
+            self.state_erase_key(&mut keys);
+        }
         let cnt = rand(1, 3);
         for _ in 0..cnt {
-            match rand(0, 2) {
-                1 => self.state_add_key(&mut keys),
-                _ => self.state_erase_key(&mut keys),
-            }
+            self.state_add_key(&mut keys);
         }
+        // let cnt = rand(1, 3);
+        // for _ in 0..cnt {
+        //     match rand(0, 2) {
+        //         1 => self.state_add_key(&mut keys),
+        //         _ => self.state_erase_key(&mut keys),
+        //     }
+        // }
         self.state_generate(&keys)
     }
 
@@ -630,8 +643,8 @@ impl Solver {
             current_states.push(init_state.clone());
         }
 
-        // let tl = 4.5;
-        let tl = 10.0;
+        let tl = 4.5;
+        // let tl = 10.0;
 
         let mut cnt = 0;
         let mut acc = 0;
